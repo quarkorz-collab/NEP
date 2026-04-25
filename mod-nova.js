@@ -259,7 +259,12 @@ NEPForge.installShim({
         const fn  = isFunc(binding) ? binding : binding.fn;
         const pri = isObj(binding) ? (binding.priority || 0) : 0;
         if (!isFunc(fn)) continue;
-        RenderPipeline[layer]?.(fn, id, pri);
+        const compat = (payloadOrCtx, payloadMaybe) => {
+          const payload = payloadMaybe || payloadOrCtx || {};
+          const g = payload.ctx || payload.g || payloadOrCtx;
+          return fn(g, payload);
+        };
+        RenderPipeline[layer]?.(compat, id, pri);
       }
       cleanup.add(() => RenderPipeline.removeByMod(id));
     }

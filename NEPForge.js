@@ -5561,6 +5561,10 @@ noWarpBonus: `NEPForge.install({
     const restoreBuildToPlayer = (build) => {
       const p = window.Player;
       if (!p || !build) return false;
+      const startLv = Math.max(1, Math.min(120, Number(build.startLv || 1) || 1));
+      p.lv = startLv;
+      p.xp = 0;
+      if (typeof window.xpNeedFor === 'function') p.xpNeed = window.xpNeedFor(startLv);
       p.maxHp = build.maxHp ?? p.maxHp;
       p.hp = Math.max(1, build.hp ?? build.maxHp ?? p.maxHp ?? p.hp ?? 1);
       p.fireRate = build.fireRate ?? p.fireRate;
@@ -5580,13 +5584,23 @@ noWarpBonus: `NEPForge.install({
       return true;
     };
 
+    const suppressUpgradePoolDuring = (fn) => {
+      const pool = window.UpgradePool || {};
+      const restores = [];
+      for (const [k, u] of Object.entries(pool)) {
+        if (!u || typeof u.apply !== 'function') continue;
+        const rawApply = u.apply;
+        u.apply = function nopApply() {};
+        restores.push(() => { u.apply = rawApply; });
+      }
+      try { return fn(); }
+      finally { restores.forEach(r => { try { r(); } catch(_) {} }); }
+    };
+
     api.patch.around('startRun', (orig, cfg = {}) => {
       const b = pickBuildA();
       const startWave = Math.max(1, Number(cfg?.wave || 1));
-      const p0 = window.Player;
-      if (p0) p0.__nepNoWarpSuppressUpgrades__ = true;
-      const out = orig(cfg);
-      if (p0) setTimeout(() => { try { p0.__nepNoWarpSuppressUpgrades__ = false; } catch(_) {} }, 0);
+      const out = suppressUpgradePoolDuring(() => orig(cfg));
       if (startWave <= 1) return out;
 
       const reapplied = restoreBuildToPlayer(b);

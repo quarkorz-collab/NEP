@@ -917,7 +917,8 @@ NEPForge.installShim({
       };
 
       const renderProfileTab = (target) => {
-        const all = SharedStore.get('nova', '__profiles__', {});
+        const rawProfiles = SharedStore.get('nova', '__profiles__', {});
+        const all = (rawProfiles && typeof rawProfiles === 'object') ? rawProfiles : {};
         const names = Object.keys(all).sort((a, b) => (all[b]?.savedAt || 0) - (all[a]?.savedAt || 0));
         const top = document.createElement('div');
         top.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
@@ -944,7 +945,10 @@ NEPForge.installShim({
           if (!txt) return;
           try {
             const obj = JSON.parse(txt);
-            const merged = { ...SharedStore.get('nova', '__profiles__', {}), ...obj };
+            const prev = SharedStore.get('nova', '__profiles__', {});
+            const safePrev = (prev && typeof prev === 'object') ? prev : {};
+            const safeObj = (obj && typeof obj === 'object') ? obj : {};
+            const merged = { ...safePrev, ...safeObj };
             SharedStore.set('nova', '__profiles__', merged, 'nova-forge');
             UIManager.toast('Profiles imported', '#50DC64', 1600);
             _refreshMenuTab();
@@ -1395,7 +1399,8 @@ NEPForge.installShim({
         save(name) {
           const key = String(name || '').trim();
           if (!key) throw new Error('Nova.profile.save: name required');
-          const all = SharedStore.get('nova', '__profiles__', {});
+          const prev = SharedStore.get('nova', '__profiles__', {});
+          const all = (prev && typeof prev === 'object') ? prev : {};
           const pack = _snapshotTopLevelDescriptors();
           all[key] = {
             savedAt: Date.now(),
@@ -1405,12 +1410,14 @@ NEPForge.installShim({
           return { key, count: pack.length };
         },
         list() {
-          const all = SharedStore.get('nova', '__profiles__', {});
+          const prev = SharedStore.get('nova', '__profiles__', {});
+          const all = (prev && typeof prev === 'object') ? prev : {};
           return Object.keys(all);
         },
         load(name, { clear = true } = {}) {
           const key = String(name || '').trim();
-          const all = SharedStore.get('nova', '__profiles__', {});
+          const prev = SharedStore.get('nova', '__profiles__', {});
+          const all = (prev && typeof prev === 'object') ? prev : {};
           const profile = all[key];
           if (!profile) throw new Error(`Nova.profile.load: profile "${key}" not found`);
           if (clear) window.Nova?.unloadAll?.();
@@ -1418,7 +1425,8 @@ NEPForge.installShim({
         },
         remove(name) {
           const key = String(name || '').trim();
-          const all = SharedStore.get('nova', '__profiles__', {});
+          const prev = SharedStore.get('nova', '__profiles__', {});
+          const all = (prev && typeof prev === 'object') ? prev : {};
           if (!all[key]) return false;
           delete all[key];
           SharedStore.set('nova', '__profiles__', all, 'nova-forge');

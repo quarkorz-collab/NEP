@@ -2216,6 +2216,7 @@ function _injectGameHooks() {
     if (p && !p.__nepLvHooked__) {
       PatchMgr.watch(p, 'lv', {
         set(newLv, oldLv) {
+           if (p?.__nepNoWarpSuppressUpgrades__) return newLv;
            if (newLv > oldLv) {
              const pool = window.UpgradePool || {};
              const keys = Object.keys(pool);

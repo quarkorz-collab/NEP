@@ -657,7 +657,7 @@ NEPForge.installShim({
       hdr.style.cssText = 'padding:6px 0 10px;border-bottom:1px solid rgba(179,108,255,0.25);margin-bottom:10px;';
       hdr.innerHTML = `
         <div style="font-size:17px;font-weight:900;color:#B36CFF;letter-spacing:3px;text-shadow:0 0 14px #B36CFF55;">✦ NOVA FORGE</div>
-        <div style="font-size:9px;color:#555;margin-top:2px;font-family:monospace;">META-MODLOADER v1.1 · ${[..._mods.values()].filter(m => !m.parentId).length} mods · Type Nova.help() for docs</div>
+        <div style="font-size:9px;color:#555;margin-top:2px;font-family:monospace;">META-MODLOADER v1.2 · ${[..._mods.values()].filter(m => !m.parentId).length} mods · Type Nova.help() for docs</div>
       `;
       container.appendChild(hdr);
 
@@ -861,6 +861,23 @@ NEPForge.installShim({
         return _install({ id, ...descriptor });
       },
 
+      /** 批量安装：[{id, ...descriptor}] 或 {id: descriptor} */
+      defMany(entries = []) {
+        const out = [];
+        if (Array.isArray(entries)) {
+          for (const item of entries) {
+            if (!isObj(item) || !isStr(item.id)) continue;
+            out.push(_install({ ...item }));
+          }
+        } else if (isObj(entries)) {
+          for (const [id, descriptor] of Object.entries(entries)) {
+            if (!isObj(descriptor)) continue;
+            out.push(_install({ id, ...descriptor }));
+          }
+        }
+        return out;
+      },
+
       /** 卸载一个 Nova Mod（含所有子 Mod 和插件） */
       unload(id) { _uninstall(id); },
 
@@ -911,6 +928,35 @@ NEPForge.installShim({
             error:   r._err,
             subMods: r._subMods,
           }));
+      },
+
+      /** 输出 Mod 拓扑图（父子/插件关系） */
+      graph() {
+        const nodes = [..._mods.values()].map(r => ({
+          id: r.id,
+          parentId: r.parentId || null,
+          loaded: !!r.loaded,
+          subMods: (r._subMods || []).slice(),
+        }));
+        const edges = [];
+        for (const n of nodes) {
+          for (const s of n.subMods || []) edges.push({ from: n.id, to: s, type: 'submod' });
+          if (n.parentId) edges.push({ from: n.parentId, to: n.id, type: 'parent' });
+        }
+        return { nodes, edges };
+      },
+
+      /** 运行时健康诊断（快速查看是否有失败 mod / 未清理 tick） */
+      doctor() {
+        const failed = [..._mods.values()].filter(r => !!r._err).map(r => ({ id: r.id, error: r._err }));
+        return {
+          version: '1.2.0',
+          totalMods: _mods.size,
+          topLevel: _topLevelRecords().length,
+          ticking: _tickMap.size,
+          pluginHosts: _plugins.size,
+          failed,
+        };
       },
 
       /**
@@ -1042,12 +1088,42 @@ NEPForge.installShim({
         }
       },
 
-      version: '1.1.0',
+      /** 内置预设：快速切换优化策略 */
+      preset: {
+        performance() {
+          const rec = _mods.get('nova-optimizer');
+          if (!rec?.state) return false;
+          rec.state.update({
+            bulletCulling: true,
+            enemyLOD: true,
+            adaptiveFX: true,
+            dynamicThrottle: true,
+            fpsTarget: 60,
+            cullMargin: 40,
+          });
+          return true;
+        },
+        quality() {
+          const rec = _mods.get('nova-optimizer');
+          if (!rec?.state) return false;
+          rec.state.update({
+            bulletCulling: true,
+            enemyLOD: false,
+            adaptiveFX: false,
+            dynamicThrottle: false,
+            fpsTarget: 50,
+            cullMargin: 80,
+          });
+          return true;
+        }
+      },
+
+      version: '1.2.0',
 
       help() {
         console.log(`%c
 ╔══════════════════════════════════════════════════════════════════╗
-║  ✦  NOVA FORGE v1.1  ·  Elegant Meta-Loader for NEP             ║
+║  ✦  NOVA FORGE v1.2  ·  Elegant Meta-Loader for NEP             ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║  INSTALL                                                          ║
 ║    Nova.def(id, descriptor)    Define + install a Nova mod       ║
@@ -1056,9 +1132,11 @@ NEPForge.installShim({
 ║    Nova.reloadAll()            Reload all top-level mods          ║
 ║    Nova.unloadAll()            Unload all top-level mods          ║
 ║    Nova.compose(id, ...descs)  Merge + install multiple descs    ║
+║    Nova.defMany(list|map)       Batch install many descriptors    ║
 ║    Nova.plugin(host, id, desc) Register a plugin sub-mod         ║
 ║    Nova.exportPack()/importPack(pack,{clear})                    ║
 ║    Nova.profile.save/load/list/remove(name)                       ║
+║    Nova.graph() / Nova.doctor()  Runtime topology + diagnostics  ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║  DESCRIPTOR FIELDS                                                ║
 ║    state       { key: defaultValue }   Reactive proxy state      ║
@@ -1096,7 +1174,7 @@ NEPForge.installShim({
 
     // Boot
     _createMenuTab();
-    _info('[Nova] ✦ Nova Forge v1.1 initialized. Menu tab registered. Nova.help() for docs.');
-    UIManager.toast('✦ NOVA FORGE v1.1', '#B36CFF', 3500);
+    _info('[Nova] ✦ Nova Forge v1.2 initialized. Menu tab registered. Nova.help() for docs.');
+    UIManager.toast('✦ NOVA FORGE v1.2', '#B36CFF', 3500);
   }
 });

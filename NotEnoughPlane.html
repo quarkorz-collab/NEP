@@ -1651,6 +1651,8 @@ input[type="checkbox"] {
               <div style="display:flex; gap:8px; flex-wrap:wrap">
                 <button class="mini-btn nav-btn active" id="btnEditA">EDIT BUILD A</button>
                 <button class="mini-btn nav-btn" id="btnEditB">EDIT BUILD B</button>
+                <button class="mini-btn" id="btnCopyAtoB" style="border-color:#52E6FF;color:#52E6FF">COPY A → B</button>
+                <button class="mini-btn" id="btnCopyBtoA" style="border-color:#B36CFF;color:#B36CFF">COPY B → A</button>
               </div>
               <div class="menu-actions" style="margin:0; width:min(420px,100%)">
                 <button id="btnSaveBuilds" style="border-color:var(--c-yellow);color:var(--c-yellow)">SAVE</button>
@@ -1737,7 +1739,7 @@ input[type="checkbox"] {
               <div class="muted" style="margin-top:8px">建议保持 0~4 个词条；分裂/烟花类会显著提高弹幕量。</div>
             </div>
           </details>
-          <details class="acc">
+<details class="acc">
   <summary>PLAYER EMITTERS <span class="muted">START LOADOUT · 0~3</span></summary>
   <div class="acc-body">
     <div class="field">
@@ -1748,6 +1750,20 @@ input[type="checkbox"] {
     <div class="muted" style="margin-top:8px">
       选择玩家开局携带的额外发射器（最多 3 个）。生存模式中仍可掉落并“顶掉最旧”的 emitter。
     </div>
+  </div>
+</details>
+<details class="acc">
+  <summary>ADVANCED EMITTER GRAPH <span class="muted">UNLIMITED · NESTED WRAPPER</span></summary>
+  <div class="acc-body">
+    <div class="field">
+      <label>EMITTER GRAPH JSON (ARRAY)</label>
+      <textarea id="ws_emitGraphJson" style="min-height:120px;font-family:monospace" placeholder='[{"isWrapper":false,"type":"AIM","mods":["HOMING"],"speed":220,"cd":1.2}]'></textarea>
+    </div>
+    <div class="menu-actions" style="margin-top:8px;justify-content:flex-start;gap:8px;flex-wrap:wrap">
+      <button id="btnApplyEmitGraph" class="mini-btn" style="border-color:#52E6FF;color:#52E6FF">APPLY GRAPH</button>
+      <button id="btnUseSimpleEmitters" class="mini-btn" style="border-color:#aaa;color:#ddd">USE SIMPLE CHIPS</button>
+    </div>
+    <div class="muted" style="margin-top:6px">支持与 FORGE 相同的 emitter/wrapper 递归结构。配置后将不再受 3 个开局 emitter 限制。</div>
   </div>
 </details>
         </div>
@@ -12969,6 +12985,19 @@ function setupPlayerEmittersFromBuild(build){
   Player.emitterSeq = 0;
   Player.emitters.length = 0;
 
+  const graph = Array.isArray(build?.emitterSpecs) ? build.emitterSpecs : null;
+  if (graph && graph.length){
+    for (const node of graph){
+      const em = materializeEmitterSpec(node);
+      if (!em) continue;
+      em.type = em.type || (node?.type || node?.wrapperType || '_GRAPH');
+      em.cd = 0.15 + Math.random()*0.35;
+      em._born = ++Player.emitterSeq;
+      Player.emitters.push(em);
+    }
+    return;
+  }
+
   const list = (build?.emitters || []).slice(0, Player.emittersMax || 3);
   for(const type of list){
     const mk = PlayerEmitterCatalog[type];
@@ -13019,15 +13048,27 @@ function setupRivalEmittersFromBuild(e, build){
   e._emitters = [];
   e._emitSeq = 0;
 
-  const list = (b.emitters || []).slice(0, 3);
-  for(const type of list){
-    const mk = RivalCatalog[type];
-    if (!mk) continue;
-    const em = mk();
-    em.type = type;
-    em.cd = 0.15 + Math.random()*0.35;
-    em._born = ++e._emitSeq;
-    e._emitters.push(em);
+  const graph = Array.isArray(b.emitterSpecs) ? b.emitterSpecs : null;
+  if (graph && graph.length){
+    for (const node of graph){
+      const em = materializeEmitterSpec(node);
+      if (!em) continue;
+      em.type = em.type || (node?.type || node?.wrapperType || '_GRAPH');
+      em.cd = 0.15 + Math.random()*0.35;
+      em._born = ++e._emitSeq;
+      e._emitters.push(em);
+    }
+  } else {
+    const list = (b.emitters || []).slice(0, 3);
+    for(const type of list){
+      const mk = RivalCatalog[type];
+      if (!mk) continue;
+      const em = mk();
+      em.type = type;
+      em.cd = 0.15 + Math.random()*0.35;
+      em._born = ++e._emitSeq;
+      e._emitters.push(em);
+    }
   }
 }
 
@@ -18945,6 +18986,7 @@ const DefaultBuild = (name)=>({
   pierceBase:0, drones:0, homingAmmo:0, bomb:1,
   gunMods:[],
   emitters:[],
+  emitterSpecs:[],
 });
 
 let Builds = { A: DefaultBuild('BUILD A'), B: (()=>{ const b=DefaultBuild('BUILD B'); b.maxHp=120; return b; })() };
@@ -19014,6 +19056,9 @@ function clampBuild(b){
   b.emitters = Array.from(new Set((b.emitters||[])))
   .filter(k => typeof PlayerEmitterCatalog==='object' && !!PlayerEmitterCatalog[k])
   .slice(0, (Player.emittersMax || 3));
+  b.emitterSpecs = Array.isArray(b.emitterSpecs)
+    ? b.emitterSpecs.map(node => normalizeSerializedEmitter(node)).filter(Boolean).slice(0, 64)
+    : [];
   return b;
 }
 
@@ -19231,6 +19276,11 @@ function bindWorkshopCoreFinal(){
   const btnA = rebind('btnEditA');
   const btnB = rebind('btnEditB');
   const btnReset = rebind('btnResetBuilds');
+  const btnCopyAtoB = rebind('btnCopyAtoB');
+  const btnCopyBtoA = rebind('btnCopyBtoA');
+  const btnApplyEmitGraph = rebind('btnApplyEmitGraph');
+  const btnUseSimpleEmitters = rebind('btnUseSimpleEmitters');
+  const wsEmitGraphJson = rebind('ws_emitGraphJson');
 
   // inputs (core)
   const wsName = rebind('ws_name');
@@ -19274,10 +19324,13 @@ function bindWorkshopCoreFinal(){
     btnB?.classList.toggle('active', MenuUI.editKey==='B');
     
     // ---- emitter chips (FIX: refresh on build switch / reset) ----
-const emSet = new Set(b.emitters || []);
+    const emSet = new Set(b.emitters || []);
 document.querySelectorAll('#ws_emitChips .pick-chip').forEach(btn=>{
   btn.classList.toggle('on', emSet.has(btn.dataset.key));
 });
+    if (wsEmitGraphJson) {
+      wsEmitGraphJson.value = JSON.stringify(Array.isArray(b.emitterSpecs) ? b.emitterSpecs : [], null, 2);
+    }
 
     refreshForgePreview?.();
   }
@@ -19307,6 +19360,24 @@ document.querySelectorAll('#ws_emitChips .pick-chip').forEach(btn=>{
     pullUI();
     MenuUI.editKey = 'B';
     pushUI();
+  });
+
+  btnCopyAtoB && (btnCopyAtoB.onclick = ()=>{
+    pullUI();
+    Builds.B = clampBuild(deepClone(Builds.A));
+    saveBuilds?.();
+    if (MenuUI.editKey === 'B') pushUI();
+    syncWorkshopFromModel?.();
+    textPop?.(W*0.5, 90, 'BUILD A → BUILD B', '#52E6FF');
+  });
+
+  btnCopyBtoA && (btnCopyBtoA.onclick = ()=>{
+    pullUI();
+    Builds.A = clampBuild(deepClone(Builds.B));
+    saveBuilds?.();
+    if (MenuUI.editKey === 'A') pushUI();
+    syncWorkshopFromModel?.();
+    textPop?.(W*0.5, 90, 'BUILD B → BUILD A', '#B36CFF');
   });
 
   // 任意 core 输入变化 => 写回 build
@@ -19342,6 +19413,33 @@ document.querySelectorAll('#ws_emitChips .pick-chip').forEach(btn=>{
   syncWorkshopFromModel();
 });
 
+  btnApplyEmitGraph && (btnApplyEmitGraph.onclick = ()=>{
+    const b = currentBuild();
+    let arr;
+    try {
+      arr = JSON.parse(wsEmitGraphJson?.value || '[]');
+      if (!Array.isArray(arr)) throw new Error('Emitter graph must be an array.');
+    } catch (e) {
+      textPop?.(W*0.5, 90, `EMITTER GRAPH JSON ERROR`, '#FF2F57');
+      return;
+    }
+    b.emitterSpecs = arr.map(node => normalizeSerializedEmitter(node)).filter(Boolean).slice(0, 64);
+    b.emitters = [];
+    clampBuild(b);
+    saveBuilds?.();
+    syncWorkshopFromModel?.();
+    textPop?.(W*0.5, 90, `EMITTER GRAPH APPLIED (${b.emitterSpecs.length})`, '#52E6FF');
+  });
+
+  btnUseSimpleEmitters && (btnUseSimpleEmitters.onclick = ()=>{
+    const b = currentBuild();
+    b.emitterSpecs = [];
+    clampBuild(b);
+    saveBuilds?.();
+    syncWorkshopFromModel?.();
+    textPop?.(W*0.5, 90, 'SWITCHED TO SIMPLE EMITTER CHIPS', '#FFB020');
+  });
+
   // 初次回填
   if (!MenuUI.editKey) MenuUI.editKey = 'A';
   pushUI();
@@ -19376,6 +19474,7 @@ function buildPlayerEmitterChips(){
         set.add(k);
       }
       b.emitters = Array.from(set);
+      b.emitterSpecs = []; // 使用简易 chips 时自动回退到基础模式
       clampBuild(b);
       saveBuilds();
       syncWorkshopFromModel(); // 统一回填/刷新
@@ -19434,6 +19533,9 @@ function syncWorkshopFromModel(){
 document.querySelectorAll('#ws_emitChips .pick-chip').forEach(btn=>{
   btn.classList.toggle('on', emSet.has(btn.dataset.key));
 });
+
+  const graphEl = document.getElementById('ws_emitGraphJson');
+  if (graphEl) graphEl.value = JSON.stringify(Array.isArray(b.emitterSpecs) ? b.emitterSpecs : [], null, 2);
 
   // active state
   document.getElementById('btnEditA')?.classList.toggle('active', MenuUI.editKey==='A');

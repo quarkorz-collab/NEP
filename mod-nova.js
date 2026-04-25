@@ -1100,6 +1100,16 @@ NEPForge.installShim({
             title: 'Auto Repair',
             desc: '血量低于 25% 时每秒小幅修复。',
             code: `Nova.def('example-auto-repair', {\n  name:'Auto Repair', version:'1.0',\n  tick(ctx, dt){\n    const p = ctx.resolver.get('Player');\n    if (!p?.maxHp) return;\n    if (p.hp / p.maxHp < 0.25) p.hp = Math.min(p.maxHp, p.hp + 18 * dt);\n  }\n});`
+          },
+          {
+            title: 'Config Driven Heal',
+            desc: '演示 descriptor.config 的布尔/数字/枚举控件。',
+            code: `Nova.def('example-config-heal', {\n  name:'Config Driven Heal', version:'1.0',\n  config:{\n    enabled:{ type:'boolean', label:'Enable Heal', value:true },\n    healPerSec:{ type:'number', label:'Heal/sec', min:1, max:80, step:1, value:12 },\n    mode:{ type:'select', label:'Mode', options:['safe','aggressive'], value:'safe' },\n  },\n  tick(ctx, dt){\n    const c = ctx.config || {};\n    const enabled = !!(c.enabled?.value ?? c.enabled);\n    if (!enabled) return;\n    const p = ctx.resolver.get('Player');\n    if (!p?.maxHp) return;\n    const ratio = p.hp / p.maxHp;\n    const mode = (c.mode?.value ?? c.mode ?? 'safe');\n    const trigger = mode === 'aggressive' ? 0.8 : 0.45;\n    if (ratio < trigger) {\n      const heal = Number(c.healPerSec?.value ?? c.healPerSec ?? 12);\n      p.hp = Math.min(p.maxHp, p.hp + heal * dt);\n    }\n  }\n});`
+          },
+          {
+            title: 'Config HUD Label',
+            desc: '演示 string/number 配置与实时 HUD 文本。',
+            code: `Nova.def('example-config-hud', {\n  name:'Config HUD Label', version:'1.0',\n  config:{\n    text:{ type:'string', label:'HUD Text', value:'NOVA CONFIG HUD' },\n    x:{ type:'number', label:'X', min:0, max:800, step:1, value:12 },\n    y:{ type:'number', label:'Y', min:0, max:240, step:1, value:38 },\n    color:{ type:'string', label:'Color', value:'#52E6FF' },\n  },\n  render:{\n    post(g){\n      const c = window.Nova?.get('example-config-hud')?.desc?.config || {};\n      const text = String(c.text?.value ?? c.text ?? 'NOVA');\n      const x = Number(c.x?.value ?? c.x ?? 12);\n      const y = Number(c.y?.value ?? c.y ?? 38);\n      const color = String(c.color?.value ?? c.color ?? '#52E6FF');\n      if (!g?.fillText) return;\n      g.save();\n      g.fillStyle = color;\n      g.font = '700 13px Consolas';\n      g.fillText(text, x, y);\n      g.restore();\n    }\n  }\n});`
           }
         ];
 

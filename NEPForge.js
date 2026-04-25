@@ -1459,14 +1459,16 @@ const RenderPipeline = (() => {
       const H  = _g('H') || 0;
       const game = _g('Game');
       const payload = { ctx: gc, g: gc, W, H, game, time: game?.time || 0 };
+      const baseTf = (typeof gc.getTransform === 'function') ? gc.getTransform() : null;
       for (const h of _hooks[phase]) {
         const guarded = _canGuardCtx(gc);
         if (guarded) { try { gc.save(); } catch(_) {} }
         try {
-          // Normalize per-hook canvas state so previous draw transforms/styles
-          // cannot leak into mod overlays unpredictably.
-          if (typeof gc.resetTransform === 'function') gc.resetTransform();
-          else if (typeof gc.setTransform === 'function') gc.setTransform(1, 0, 0, 1, 0, 0);
+          // Normalize per-hook canvas state to the frame baseline transform
+          // (instead of hard reset to identity), so DPI/camera scale stays correct.
+          if (baseTf && typeof gc.setTransform === 'function') {
+            gc.setTransform(baseTf.a, baseTf.b, baseTf.c, baseTf.d, baseTf.e, baseTf.f);
+          }
           if (gc && typeof gc.textAlign === 'string') gc.textAlign = 'left';
           if (gc && typeof gc.textBaseline === 'string') gc.textBaseline = 'alphabetic';
           h.fn(payload);

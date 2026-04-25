@@ -24,9 +24,13 @@ Nova.def('nova-optimizer', {
     enemyLOD:         true,
     adaptiveFX:       true,
     dynamicThrottle:  true,
+    beamCulling:      true,
     fpsTarget:        55,
     cullMargin:       60,    // px 越界后才剔除
     lodThreshold:     80,    // % FPS 目标达到此比例时启用 LOD
+    adaptiveCullScale: 1.0,  // 动态扩大剔除力度
+    entityHardCap:    1800,  // 实体硬上限，防止爆炸增长
+    cleanupEveryTicks: 2400, // 看门狗清理周期（tick）
 
     // 实时统计
     fps:              0,
@@ -38,6 +42,8 @@ Nova.def('nova-optimizer', {
     memPressure:      'ok',
     throttledEnemies: 0,
     skippedShots:     0,
+    culledBeams:      0,
+    hardTrimmed:      0,
 
     // 内部（不渲染）
     _fpsHistory:      [],
@@ -57,8 +63,11 @@ Nova.def('nova-optimizer', {
       { type: 'toggle',  state: 'enemyLOD',      label: 'ENEMY LOD' },
       { type: 'toggle',  state: 'adaptiveFX',    label: 'ADAPTIVE FX' },
       { type: 'toggle',  state: 'dynamicThrottle', label: 'DYNAMIC THROTTLE' },
+      { type: 'toggle',  state: 'beamCulling',   label: 'BEAM CULLING' },
       { type: 'slider',  state: 'fpsTarget',     label: 'FPS TARGET', min: 20, max: 120, step: 5 },
       { type: 'slider',  state: 'cullMargin',    label: 'CULL MARGIN', min: 0, max: 200, step: 10 },
+      { type: 'slider',  state: 'adaptiveCullScale', label: 'CULL SCALE', min: 0.5, max: 2.5, step: 0.1 },
+      { type: 'slider',  state: 'entityHardCap', label: 'ENTITY HARD CAP', min: 600, max: 4000, step: 100 },
       { type: 'separator' },
       { type: 'heading', text: '📊 STATS' },
       { type: 'display', label: 'FPS',       bind: 'fps',           color: '#50DC64' },
@@ -69,10 +78,12 @@ Nova.def('nova-optimizer', {
       { type: 'display', label: 'LOD SAVES', bind: 'lodActive',     color: '#B36CFF' },
       { type: 'display', label: 'THROTTLED', bind: 'throttledEnemies', color: '#FFB020' },
       { type: 'display', label: 'SKIP/F',    bind: 'skippedShots',   color: '#FF2F57' },
+      { type: 'display', label: 'BEAM CULL', bind: 'culledBeams',    color: '#52E6FF' },
+      { type: 'display', label: 'HARD TRIM', bind: 'hardTrimmed',    color: '#FF2F57' },
       { type: 'separator' },
       { type: 'button',  label: 'RESET STATS', color: '#555',
         action(state) {
-          state.update({ culledBullets: 0, lodActive: 0, throttledEnemies: 0, skippedShots: 0, _fpsHistory: [] });
+          state.update({ culledBullets: 0, lodActive: 0, throttledEnemies: 0, skippedShots: 0, culledBeams: 0, hardTrimmed: 0, _fpsHistory: [] });
         }
       },
     ]
@@ -122,13 +133,15 @@ Nova.def('nova-optimizer', {
                : 'critical';
 
     s._ticksSinceReset = (s._ticksSinceReset || 0) + 1;
+    const framePressure = s.frameMs > 24 ? 1.6 : s.frameMs > 19 ? 1.25 : 1.0;
+    const cullScale = Math.max(0.5, (s.adaptiveCullScale || 1) * framePressure);
 
     // ── Bullet Culling ────────────────────────────────────────────
     if (s.bulletCulling) {
       const W = ctx.game.W || 400;
       const H = ctx.game.H || 600;
       const pressureMargin = s.pressure === 'critical' ? -40 : s.pressure === 'high' ? -20 : 0;
-      const m = Math.max(0, s.cullMargin + pressureMargin);
+      const m = Math.max(0, (s.cullMargin + pressureMargin) / cullScale);
       let culled = 0;
 
       const arrs = [
@@ -144,6 +157,25 @@ Nova.def('nova-optimizer', {
         }
       }
       s.culledBullets = culled;
+    }
+
+    // ── Beam Culling ─────────────────────────────────────────────
+    if (s.beamCulling) {
+      const W = ctx.game.W || 400;
+      const H = ctx.game.H || 600;
+      const m = Math.max(20, (s.cullMargin || 60) * 0.75);
+      let culled = 0;
+      const beams = ctx.game.beams || [];
+      for (const beam of beams) {
+        if (!beam?.alive) continue;
+        const bx = beam.x ?? beam.sx ?? 0;
+        const by = beam.y ?? beam.sy ?? 0;
+        if (bx < -m || bx > W + m || by < -m || by > H + m) {
+          beam.alive = false;
+          culled++;
+        }
+      }
+      s.culledBeams = culled;
     }
 
     // ── Enemy LOD ─────────────────────────────────────────────────
@@ -195,7 +227,7 @@ Nova.def('nova-optimizer', {
     }
 
     // ── Memory Watchdog（每 ~60 秒清理死亡实体） ──────────────────
-    if (s._ticksSinceReset % 3600 === 0) {
+    if (s._ticksSinceReset % (s.cleanupEveryTicks || 2400) === 0) {
       const g = window.Game;
       if (g?.state === 'playing') {
         const before = (window.enemies || []).length;
@@ -214,10 +246,37 @@ Nova.def('nova-optimizer', {
             ...window.bulletsP.filter(b => b.alive)
           );
         }
+        if (window.beams) {
+          window.beams.splice(0, window.beams.length,
+            ...window.beams.filter(b => b?.alive !== false)
+          );
+        }
         const after = (window.enemies || []).length;
         s.memPressure = before - after > 20 ? 'high' : 'ok';
         _logClean(before, after);
       }
+    }
+
+    // ── Hard Cap Trim（极端场景保护）─────────────────────────────
+    const hardCap = Math.max(300, s.entityHardCap || 1800);
+    const allEntities = [
+      ...(ctx.game.enemies || []),
+      ...(ctx.game.bulletsE || []),
+      ...(ctx.game.bulletsP || []),
+      ...(ctx.game.beams || []),
+    ];
+    if (allEntities.length > hardCap) {
+      const over = allEntities.length - hardCap;
+      let trimmed = 0;
+      for (const pool of [ctx.game.bulletsE || [], ctx.game.bulletsP || [], ctx.game.beams || []]) {
+        for (let i = 0; i < pool.length && trimmed < over; i++) {
+          if (pool[i]?.alive) { pool[i].alive = false; trimmed++; }
+        }
+        if (trimmed >= over) break;
+      }
+      s.hardTrimmed = trimmed;
+    } else {
+      s.hardTrimmed = 0;
     }
   },
 

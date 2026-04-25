@@ -3706,6 +3706,20 @@ const UIFramework = (() => {
   /* ─── 可拖拽 ─────────────────────────────────────── */
   function _makeDraggable(panel, handle) {
     let drag = false, sX, sY, oX, oY;
+    const _clampPanelToViewport = () => {
+      const vw = window.innerWidth  || document.documentElement.clientWidth  || 0;
+      const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+      const rect = panel.getBoundingClientRect();
+      const maxLeft = Math.max(0, vw - rect.width);
+      const maxTop  = Math.max(0, vh - rect.height);
+      const nextLeft = clamp(rect.left, 0, maxLeft);
+      const nextTop  = clamp(rect.top,  0, maxTop);
+      panel.style.left = `${nextLeft}px`;
+      panel.style.top  = `${nextTop}px`;
+      panel.style.transform = 'none';
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+    };
     handle.style.touchAction = 'none';
     handle.addEventListener('pointerdown', e => {
       if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
@@ -3720,12 +3734,19 @@ const UIFramework = (() => {
       panel.style.top  = (oY + e.clientY - sY) + 'px';
       panel.style.transform = 'none';
       panel.style.right = panel.style.bottom = 'auto';
+      _clampPanelToViewport();
     });
     const end = e => {
-      if (drag) { drag = false; try { handle.releasePointerCapture(e.pointerId); } catch(_) {} }
+      if (drag) {
+        drag = false;
+        _clampPanelToViewport();
+        try { handle.releasePointerCapture(e.pointerId); } catch(_) {}
+      }
     };
     handle.addEventListener('pointerup',     end);
     handle.addEventListener('pointercancel', end);
+    window.addEventListener('resize', _clampPanelToViewport);
+    setTimeout(_clampPanelToViewport, 0);
   }
 
   /* ─── 核心 Schema Builder ──────────────────────────
@@ -4564,7 +4585,7 @@ if (schema.style != null) {
   }
   return base;
 })(),
-      children: [header, { tag: 'div', class: '_nep_panel_body', style: `padding:12px;overflow:auto;overscroll-behavior:contain;${schema.startMinimized ? 'display:none;' : ''}`, children: schema.children }],
+      children: [header, { tag: 'div', class: '_nep_panel_body', style: `padding:12px;overflow:auto;overflow-x:hidden;word-break:break-word;overscroll-behavior:contain;${schema.startMinimized ? 'display:none;' : ''}`, children: schema.children }],
     };
     const panel = _build(panelSchema, modId);
     _makeDraggable(panel, panel.querySelector('._nep_drag_handle'));
@@ -5254,7 +5275,7 @@ NEPForge.install({
 `,
 };
 
-// 用 example.js 的示例替换内置示例，并补充 LAB/停火/跳关控制示例
+// 用 example.js 的示例替换内置示例，并静态整合扩展示例（含 LAB/停火/跳关等）
 for (const k of Object.keys(_EXAMPLES)) delete _EXAMPLES[k];
 Object.assign(_EXAMPLES, {
   plasmaChain: `// Example #1 from example.js
@@ -5281,15 +5302,21 @@ Object.assign(_EXAMPLES, {
   chronoSplit: `// Example #4 from example.js
 ` +
     `NEPForge.install({id:'chrono-split',name:'Chrono Split',version:'1.0',init(api){let on=false,t=0,c=0;api.patch.tap('spawnBullet',([side])=>{if(side==='E')c++;});api.patch.around('spawnBullet',(orig,side,x,y,vx,vy,opts)=>on&&side==='E'?orig(side,x,y,vx*0.4,vy*0.4,opts):orig(side,x,y,vx,vy,opts));api.events.on('forge:tick',(dt)=>{if(!on&&c>=10){on=true;t=1.2;c=0;}if(on){t-=dt;if(t<=0)on=false;}});}});`,
-  labMultiMonster: `// 新增：LAB 多怪（同时存在多只 forge 怪）
+  labMultiMonster: `// Static extra: LAB 多怪（同时存在多只 forge 怪）
 ` +
     `NEPForge.install({id:'lab-multi-spawner',name:'LAB Multi Spawner',version:'1.0',init(api){let cap=4;api.events.on('forge:tick',()=>{if(api.game.mode!=='lab'||api.game.state!=='playing')return;const F=api.resolver.get('Fortress');if(!F||F.phase!=='assault'||!F.labForgeSpec)return;const alive=(window.enemies||[]).filter(e=>e?.alive&&e.type==='ENEMY').length;for(let i=alive;i<cap;i++){window.spawnForgeEnemy?.(F.labForgeSpec);}});api.ui.toast('LAB MULTI READY','#B36CFF');}});`,
-  playerEmitterAffixControl: `// 新增：玩家 Emitter/Affix/停火动态控制
+  playerEmitterAffixControl: `// Static extra: 玩家 Emitter/Affix/停火动态控制
 ` +
     `NEPForge.install({id:'player-fire-control',name:'Player Fire Control',version:'1.0',init(api){const st={ceasefire:false};api.patch.around('firePlayer',(orig,dt)=>{if(!st.ceasefire)return orig(dt);},20);api.ui.floating({title:'FIRE CTRL',children:[api.ui.components.toggle({label:'CEASEFIRE',checked:false,onChange(v){st.ceasefire=!!v;}})]});}});`,
-  disableWarpForcedBuff: `// 新增：禁用跳关强制加成
+  disableWarpForcedBuff: `// Static extra: 禁用跳关强制加成
 ` +
     `NEPForge.install({id:'no-warp-bonus',name:'No Warp Bonus',version:'1.0',init(api){api.patch.around('startRun',(orig,cfg={})=>{const b=JSON.parse(JSON.stringify(window.Builds?.A||{}));const w=Math.max(1,Number(cfg.wave||1));const out=orig(cfg);if(w<=1)return out;const p=window.Player;if(!p)return out;p.maxHp=b.maxHp??p.maxHp;p.hp=p.maxHp;p.fireRate=b.fireRate??p.fireRate;p.dmgMul=b.dmgMul??p.dmgMul;p.gunMods.length=0;for(const k of (b.gunMods||[]))p.gunMods.push(k);return out;},99);}});`,
+  adaptiveBossScaler: `// Static extra: 自适应 Boss 缩放（波次 + 玩家 DPS）
+` +
+    `NEPForge.install({id:'adaptive-boss-scaler',name:'Adaptive Boss Scaler',version:'1.0',init(api){api.patch.before('spawnEnemyCoreFromSpecs',([spec,d])=>{if(!spec||spec._scaledByMod)return;const wave=(window.Game?.wave||1);const p=window.Player||{};const dps=(p.dmgMul||1)*(p.fireRate||1);if((spec.hp||0)>=400){spec.hp=Math.floor((spec.hp||600)*(1+wave*0.02+Math.max(0,dps-1)*0.18));spec._scaledByMod=true;}});api.ui.toast('BOSS SCALER READY','#FFB020',1400);}});`,
+  survivalDropBooster: `// Static extra: 生存补给增强（低血量时提高补给概率）
+` +
+    `NEPForge.install({id:'survival-drop-booster',name:'Survival Drop Booster',version:'1.0',init(api){api.events.on('enemyDeath',(e)=>{const p=window.Player;if(!p||!p.alive||window.Game?.mode!=='survival')return;const hpRatio=(p.hp||1)/Math.max(1,p.maxHp||1);if(hpRatio<0.35&&Math.random()<0.25){window.spawnSupply?.(e.x,e.y,'HP');}});api.log('Drop booster enabled');}});`,
 });
 
 

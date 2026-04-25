@@ -72,7 +72,7 @@ NEPForge.installShim({
       if (!isObj(desc)) return { ok: false, reason: 'descriptor must be an object' };
       const allowed = new Set([
         'id','name','version','description','state','catalog','patch','events','render','keys',
-        'waves','panel','services','mods','setup','tick','teardown',
+        'waves','panel','services','mods','config','setup','tick','teardown',
       ]);
       for (const key of Object.keys(desc)) {
         if (!allowed.has(key) && strict) return { ok: false, reason: `unknown descriptor key: ${key}` };
@@ -480,6 +480,7 @@ NEPForge.installShim({
       return {
         id,
         state,
+        config:    record?.desc?.config || null,
         game:       GameAPI,
         player:     PlayerAPI,
         fort:       FortressAPI,
@@ -844,6 +845,123 @@ NEPForge.installShim({
             meta.style.cssText = 'font-size:10px;color:#95b8bf;margin-bottom:8px;line-height:1.4;';
             meta.textContent = `id=${selected.id} · loaded=${selected.loaded ? 'yes' : 'no'} · subMods=${selected._subMods?.length || 0}`;
             detail.appendChild(meta);
+            detail.style.maxHeight = '56vh';
+            detail.style.overflow = 'auto';
+            detail.style.wordBreak = 'break-word';
+
+            const cfg = selected?.desc?.config;
+            if (cfg && typeof cfg === 'object') {
+              const cfgTitle = document.createElement('div');
+              cfgTitle.style.cssText = 'font-size:9px;color:#50DC64;letter-spacing:1.5px;margin-bottom:6px;';
+              cfgTitle.textContent = 'CONFIG CONTROLS';
+              detail.appendChild(cfgTitle);
+
+              const cfgWrap = document.createElement('div');
+              cfgWrap.style.cssText = 'max-height:32vh;overflow:auto;padding:6px;border:1px solid rgba(80,220,100,0.25);background:rgba(80,220,100,0.05);margin-bottom:10px;';
+
+              const fieldDefs = [];
+              for (const [k, v] of Object.entries(cfg)) {
+                if (v && typeof v === 'object' && (v.type || v.options || Object.prototype.hasOwnProperty.call(v, 'value'))) {
+                  fieldDefs.push({
+                    key: k,
+                    label: v.label || k,
+                    type: v.type || (Array.isArray(v.options) ? 'select' : typeof v.value),
+                    min: v.min,
+                    max: v.max,
+                    step: v.step,
+                    options: v.options,
+                    path: v.path || k,
+                    getValue: () => (v.get ? v.get(selected) : deepGet(cfg, v.path || `${k}.value`) ?? v.value),
+                    setValue: (next) => {
+                      if (v.set) v.set(next, selected);
+                      else if (v.path) deepSet(cfg, v.path, next);
+                      else if (Object.prototype.hasOwnProperty.call(v, 'value')) v.value = next;
+                      else cfg[k] = next;
+                    },
+                  });
+                } else {
+                  fieldDefs.push({
+                    key: k,
+                    label: k,
+                    type: Array.isArray(v) ? 'json' : typeof v,
+                    getValue: () => cfg[k],
+                    setValue: (next) => { cfg[k] = next; },
+                  });
+                }
+              }
+
+              const applyCfg = (label) => {
+                UIManager.toast(`config.${label} updated`, '#50DC64', 1100);
+                _refreshMenuTab();
+              };
+
+              fieldDefs.forEach((f) => {
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px;';
+                const lb = document.createElement('div');
+                lb.style.cssText = 'min-width:120px;max-width:100%;font-family:monospace;font-size:10px;color:#9ef0b1;';
+                lb.textContent = f.label;
+                row.appendChild(lb);
+
+                if (f.type === 'boolean') {
+                  const ck = document.createElement('input');
+                  ck.type = 'checkbox';
+                  ck.checked = !!f.getValue();
+                  ck.addEventListener('change', () => { f.setValue(!!ck.checked); applyCfg(f.key); });
+                  row.appendChild(ck);
+                } else if (f.type === 'number') {
+                  const n = document.createElement('input');
+                  n.type = 'number';
+                  n.value = String(Number(f.getValue() ?? 0));
+                  if (Number.isFinite(f.min)) n.min = String(f.min);
+                  if (Number.isFinite(f.max)) n.max = String(f.max);
+                  if (Number.isFinite(f.step)) n.step = String(f.step);
+                  n.style.cssText = 'flex:1;min-width:120px;padding:4px;background:#07120a;border:1px solid rgba(80,220,100,0.3);color:#cef7d9;font-family:monospace;font-size:10px;';
+                  n.addEventListener('change', () => {
+                    const nv = Number(n.value);
+                    if (!Number.isFinite(nv)) return;
+                    f.setValue(nv);
+                    applyCfg(f.key);
+                  });
+                  row.appendChild(n);
+                } else if (f.type === 'select') {
+                  const sel = document.createElement('select');
+                  sel.style.cssText = 'flex:1;min-width:120px;padding:4px;background:#07120a;border:1px solid rgba(80,220,100,0.3);color:#cef7d9;font-family:monospace;font-size:10px;';
+                  const options = Array.isArray(f.options) ? f.options : [];
+                  options.forEach((op) => {
+                    const opt = document.createElement('option');
+                    if (typeof op === 'object') { opt.value = String(op.value); opt.textContent = op.label || String(op.value); }
+                    else { opt.value = String(op); opt.textContent = String(op); }
+                    sel.appendChild(opt);
+                  });
+                  sel.value = String(f.getValue() ?? '');
+                  sel.addEventListener('change', () => { f.setValue(sel.value); applyCfg(f.key); });
+                  row.appendChild(sel);
+                } else if (f.type === 'string') {
+                  const ip = document.createElement('input');
+                  ip.value = String(f.getValue() ?? '');
+                  ip.style.cssText = 'flex:1;min-width:180px;padding:4px;background:#07120a;border:1px solid rgba(80,220,100,0.3);color:#cef7d9;font-family:monospace;font-size:10px;';
+                  ip.addEventListener('change', () => { f.setValue(ip.value); applyCfg(f.key); });
+                  row.appendChild(ip);
+                } else {
+                  const ta = document.createElement('textarea');
+                  ta.value = JSON.stringify(f.getValue(), null, 2);
+                  ta.style.cssText = 'flex:1;min-width:220px;height:64px;padding:4px;background:#07120a;border:1px solid rgba(80,220,100,0.3);color:#cef7d9;font-family:monospace;font-size:10px;';
+                  const btn = mkMiniBtn('APPLY JSON', '#50DC64', () => {
+                    try {
+                      f.setValue(JSON.parse(ta.value || 'null'));
+                      applyCfg(f.key);
+                    } catch (e) {
+                      UIManager.toast(`config.${f.key} parse error: ${e.message}`, '#FF2F57', 1800);
+                    }
+                  });
+                  row.appendChild(ta);
+                  row.appendChild(btn);
+                }
+                cfgWrap.appendChild(row);
+              });
+              detail.appendChild(cfgWrap);
+            }
 
             const snap = selected.state?.snapshot?.() || {};
             const keys = Object.keys(snap).filter(k => !k.startsWith('_')).sort();

@@ -1463,6 +1463,12 @@ const RenderPipeline = (() => {
         const guarded = _canGuardCtx(gc);
         if (guarded) { try { gc.save(); } catch(_) {} }
         try {
+          // Normalize per-hook canvas state so previous draw transforms/styles
+          // cannot leak into mod overlays unpredictably.
+          if (typeof gc.resetTransform === 'function') gc.resetTransform();
+          else if (typeof gc.setTransform === 'function') gc.setTransform(1, 0, 0, 1, 0, 0);
+          if (gc && typeof gc.textAlign === 'string') gc.textAlign = 'left';
+          if (gc && typeof gc.textBaseline === 'string') gc.textBaseline = 'alphabetic';
           h.fn(payload);
         } catch(e1) {
           const msg = String(e1?.message || e1 || '');

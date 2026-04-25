@@ -4470,7 +4470,7 @@ if (schema.style != null) {
         { tag:'div', style:'display:flex;gap:4px;',
           children: [
             schema.minimizeBtn !== false ? {
-              tag: 'button', class: 'mini-btn', text: '—',
+              tag: 'button', class: 'mini-btn', text: (schema.startMinimized ? '▢' : '—'),
               attrs: { title: 'Minimize panel' },
               style: 'padding:2px 6px;font-size:10px;',
               onClick: (e) => {
@@ -4480,6 +4480,7 @@ if (schema.style != null) {
                 if (!body) return;
                 const collapsed = body.style.display === 'none';
                 body.style.display = collapsed ? '' : 'none';
+                panel.dataset.minimized = collapsed ? '0' : '1';
                 e.target.textContent = collapsed ? '—' : '▢';
               },
             } : null,
@@ -4505,7 +4506,7 @@ if (schema.style != null) {
   }
   return base;
 })(),
-      children: [header, { tag: 'div', class: '_nep_panel_body', style: 'padding:12px;', children: schema.children }],
+      children: [header, { tag: 'div', class: '_nep_panel_body', style: `padding:12px;${schema.startMinimized ? 'display:none;' : ''}`, children: schema.children }],
     };
     const panel = _build(panelSchema, modId);
     _makeDraggable(panel, panel.querySelector('._nep_drag_handle'));
@@ -5194,6 +5195,44 @@ NEPForge.install({
 });
 `,
 };
+
+// 用 example.js 的示例替换内置示例，并补充 LAB/停火/跳关控制示例
+for (const k of Object.keys(_EXAMPLES)) delete _EXAMPLES[k];
+Object.assign(_EXAMPLES, {
+  plasmaChain: `// Example #1 from example.js
+` +
+    `NEPForge.install({id:'plasma-chain',name:'Plasma Chain',version:'1.0',init(api){
+` +
+    `api.registry.affix('PLASMA_CHAIN',{tags:['hitfx','chain'],minWave:3,weight:0.9,color:'#52E6FF',onHit(b,t){if(!t?.alive)return;const es=(window.enemies||[]).filter(e=>e!==t&&e.alive).slice(0,3);for(const e of es){e.onHit?.(b.dmg*0.35);}window.spawnShockwave?.(t.x,t.y,'#52E6FF',60,0.18);}});
+` +
+    `api.log('Plasma Chain installed');}});`,
+  hivemindCollective: `// Example #2 from example.js
+` +
+    `NEPForge.install({id:'hivemind-collective',name:'Hivemind Collective',version:'1.0',init(api){
+` +
+    `api.registry.trait('HIVEMIND',{minWave:4,weight:0.7,group:'coordination',apply(e){e._hivemind=true;}});
+` +
+    `api.log('Hivemind installed');}});`,
+  orbitalCannon: `// Example #3 from example.js
+` +
+    `NEPForge.install({id:'orbital-cannon',name:'Orbital Cannon',version:'1.0',init(api){
+` +
+    `api.registry.emitter('ORBITAL_SHOT',(cfg)=>({cd:cfg.baseCd??2.0,fire(owner){const P=window.Player;if(!P)return;const a=Math.atan2(P.y-owner.y,P.x-owner.x);window.spawnBullet?.('E',owner.x,owner.y,Math.cos(a)*320,Math.sin(a)*320,{r:4,dmg:14,col:'#FFB020',life:1.3});}}));
+` +
+    `api.log('Orbital Cannon installed');}});`,
+  chronoSplit: `// Example #4 from example.js
+` +
+    `NEPForge.install({id:'chrono-split',name:'Chrono Split',version:'1.0',init(api){let on=false,t=0,c=0;api.patch.tap('spawnBullet',([side])=>{if(side==='E')c++;});api.patch.around('spawnBullet',(orig,side,x,y,vx,vy,opts)=>on&&side==='E'?orig(side,x,y,vx*0.4,vy*0.4,opts):orig(side,x,y,vx,vy,opts));api.events.on('forge:tick',(dt)=>{if(!on&&c>=10){on=true;t=1.2;c=0;}if(on){t-=dt;if(t<=0)on=false;}});}});`,
+  labMultiMonster: `// 新增：LAB 多怪（同时存在多只 forge 怪）
+` +
+    `NEPForge.install({id:'lab-multi-spawner',name:'LAB Multi Spawner',version:'1.0',init(api){let cap=4;api.events.on('forge:tick',()=>{if(api.game.mode!=='lab'||api.game.state!=='playing')return;const F=api.resolver.get('Fortress');if(!F||F.phase!=='assault'||!F.labForgeSpec)return;const alive=(window.enemies||[]).filter(e=>e?.alive&&e.type==='ENEMY').length;for(let i=alive;i<cap;i++){window.spawnForgeEnemy?.(F.labForgeSpec);}});api.ui.toast('LAB MULTI READY','#B36CFF');}});`,
+  playerEmitterAffixControl: `// 新增：玩家 Emitter/Affix/停火动态控制
+` +
+    `NEPForge.install({id:'player-fire-control',name:'Player Fire Control',version:'1.0',init(api){const st={ceasefire:false};api.patch.around('firePlayer',(orig,dt)=>{if(!st.ceasefire)return orig(dt);},20);api.ui.floating({title:'FIRE CTRL',children:[api.ui.components.toggle({label:'CEASEFIRE',checked:false,onChange(v){st.ceasefire=!!v;}})]});}});`,
+  disableWarpForcedBuff: `// 新增：禁用跳关强制加成
+` +
+    `NEPForge.install({id:'no-warp-bonus',name:'No Warp Bonus',version:'1.0',init(api){api.patch.around('startRun',(orig,cfg={})=>{const b=JSON.parse(JSON.stringify(window.Builds?.A||{}));const w=Math.max(1,Number(cfg.wave||1));const out=orig(cfg);if(w<=1)return out;const p=window.Player;if(!p)return out;p.maxHp=b.maxHp??p.maxHp;p.hp=p.maxHp;p.fireRate=b.fireRate??p.fireRate;p.dmgMul=b.dmgMul??p.dmgMul;p.gunMods.length=0;for(const k of (b.gunMods||[]))p.gunMods.push(k);return out;},99);}});`,
+});
 
 
 /* ═══════════════════════════════════════════════════════════════════════

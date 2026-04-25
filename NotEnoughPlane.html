@@ -13600,22 +13600,26 @@ function updateBeams(dt){
     b.life -= dt;
     b.noHitT = Math.max(0, (b.noHitT||0) - dt);
 
-    if (UnitBattle.active && b.team==='E' && b.ubTeam!=null && b.noHitT<=0){
-      let target = null;
-      let bestD2 = Infinity;
-      for (const e of enemies){
-        if (!e?.alive || e.ubTeam==null || e.ubTeam===b.ubTeam) continue;
-        if (b.owner && e===b.owner) continue;
-        const d2 = distPointSeg2(e.x,e.y, b.x1,b.y1,b.x2,b.y2);
-        const rr = (e.r + b.width) * (e.r + b.width);
-        if (d2 > rr) continue;
-        if (d2 < bestD2){ bestD2 = d2; target = e; }
+    if (UnitBattle.active && b.team==='E'){
+      const beamTeam = (b.ubTeam ?? b.owner?.ubTeam ?? UnitBattle._source?.ubTeam ?? null);
+      if (beamTeam!=null && b.noHitT<=0){
+        let target = null;
+        let bestD2 = Infinity;
+        for (const e of enemies){
+          if (!e?.alive || e.ubTeam==null || e.ubTeam===beamTeam) continue;
+          if (b.owner && e===b.owner) continue;
+          const d2 = distPointSeg2(e.x,e.y, b.x1,b.y1,b.x2,b.y2);
+          const rr = (e.r + b.width) * (e.r + b.width);
+          if (d2 > rr) continue;
+          if (d2 < bestD2){ bestD2 = d2; target = e; }
+        }
+        if (target){
+          target.onHit?.(b.dmg||0);
+          sparks(target.x, target.y, 'glowE', 6, 220);
+          b.noHitT = 0.08;
+        }
       }
-      if (target){
-        target.onHit?.(b.dmg||0);
-        sparks(target.x, target.y, 'glowE', 6, 220);
-        b.noHitT = 0.08;
-      }
+      // Unit Battle 中敌方 Beam 永不命中玩家
     } else if (Game.state==='playing' && Player.alive && Player.invuln<=0){
       const d2 = distPointSeg2(Player.x,Player.y, b.x1,b.y1, b.x2,b.y2);
       const rr = (Player.r + b.width) * (Player.r + b.width);
@@ -17443,9 +17447,13 @@ function render(dt) {
 
   // 先重置回设备像素坐标系，清空整个 Canvas
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  // 防护：重置可能被污染的 canvas 状态
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
+  // 防护：重置可能被污染的 canvas 状态（防止 Mod 将画布状态污染成黑屏）
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.filter = 'none';
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = 'rgba(0,0,0,0)';
+  ctx.imageSmoothingEnabled = true;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   
   // 绘制背景底色 (Vignette) - 使用固定屏幕坐标
@@ -18000,6 +18008,27 @@ const UnitBattle = {
     t.units.push(JSON.parse(JSON.stringify(forge)));
     this.refreshList();
   },
+  addRandomUnitToTeam(teamId){
+    const t = this.teams.find(v=>v.id===teamId);
+    if (!t) return false;
+    if (typeof randomizeForgeState!=='function' || typeof readForgeSpecFromUI!=='function') return false;
+    const snap = deepClone(ForgeState);
+    try{
+      randomizeForgeState();
+      const u = deepClone(readForgeSpecFromUI());
+      if (!u) return false;
+      u.isBoss = false;
+      t.units.push(u);
+      this.refreshList();
+      return true;
+    } finally {
+      const restored = deepClone(snap);
+      for (const k of Object.keys(ForgeState)) delete ForgeState[k];
+      Object.assign(ForgeState, restored);
+      if (typeof syncForgeUIFromState==='function') syncForgeUIFromState();
+      if (typeof saveForge==='function') saveForge();
+    }
+  },
   serializeTeams(){
     return {version:1, type:'unitbattle_teams', teams:deepClone(this.teams||[])};
   },
@@ -18059,11 +18088,18 @@ const UnitBattle = {
       const add=document.createElement('button');
       add.className='mini-btn'; add.type='button'; add.textContent='新增兵种';
       add.addEventListener('click', ()=>openUbImportModal(team.id));
+      const addRandom=document.createElement('button');
+      addRandom.className='mini-btn'; addRandom.type='button'; addRandom.textContent='随机兵种';
+      addRandom.style.borderColor='rgba(157,255,173,.7)'; addRandom.style.color='#9dffad';
+      addRandom.addEventListener('click', ()=>{
+        const ok = this.addRandomUnitToTeam(team.id);
+        textPop(W*0.5, H*0.2, ok ? `${team.name} +1 随机兵种` : '随机兵种失败', ok ? C.P2 : C.Y);
+      });
       const delTeam=document.createElement('button');
       delTeam.className='mini-btn'; delTeam.type='button'; delTeam.textContent='删除队伍';
       delTeam.style.borderColor='rgba(255,120,120,.7)'; delTeam.style.color='#ffb3b3';
       delTeam.addEventListener('click', ()=>this.removeTeam(team.id));
-      actions.appendChild(add); actions.appendChild(delTeam);
+      actions.appendChild(add); actions.appendChild(addRandom); actions.appendChild(delTeam);
       head.appendChild(title); head.appendChild(actions);
 
       const row=document.createElement('div');

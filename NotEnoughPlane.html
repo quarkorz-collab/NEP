@@ -979,9 +979,54 @@ body[data-menupage="forge"] #forgePreviewSideWrap{ display:block !important; }
 #unitBattleModal:not(.show){ display:none !important; }
 #unitBattleModal.show{ display:flex; }
 #unitBattleModal.visible{ opacity:1; pointer-events:auto; }
-#unitBattleModal .ub-modal-card{ width:min(780px,94vw); max-height:min(86vh,860px); overflow:auto; overflow-x:hidden; background:linear-gradient(160deg, rgba(8,16,34,.92), rgba(24,8,40,.9)); border:1px solid rgba(130,229,255,.42); box-shadow:0 18px 50px rgba(0,0,0,.55); padding:14px; border-radius:12px; transform:translateY(18px) scale(.96); opacity:0; transition:transform .26s cubic-bezier(.2,.9,.2,1), opacity .26s ease; }
+#unitBattleModal .ub-modal-card{ width:min(1080px,96vw); max-height:min(90vh,920px); overflow:auto; overflow-x:hidden; background:linear-gradient(160deg, rgba(8,16,34,.92), rgba(24,8,40,.9)); border:1px solid rgba(130,229,255,.42); box-shadow:0 18px 50px rgba(0,0,0,.55); padding:14px; border-radius:12px; transform:translateY(18px) scale(.96); opacity:0; transition:transform .26s cubic-bezier(.2,.9,.2,1), opacity .26s ease; }
 #unitBattleModal.visible .ub-modal-card{ transform:translateY(0) scale(1); opacity:1; }
 #unitBattleModal textarea{ min-height:180px; }
+.ub-modal-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px; }
+.ub-modal-title-main{ margin:0; display:flex; flex-direction:column; gap:4px; }
+.ub-modal-sub{ font-size:10px; line-height:1.4; max-width:74ch; }
+.ub-modal-layout{ display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:10px; align-items:start; }
+.ub-main-col{ min-width:0; }
+.ub-side-col{ display:flex; flex-direction:column; gap:8px; }
+.ub-toolbar{
+  border:1px solid rgba(157,238,255,.24);
+  border-radius:10px;
+  background:rgba(0,0,0,.2);
+  padding:8px;
+  margin-bottom:8px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.ub-toolbar-row{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
+  gap:6px;
+}
+.ub-toolbar .mini-btn{
+  width:100%;
+  justify-content:center;
+  text-align:center;
+}
+.ub-side-panel{
+  border:1px solid rgba(255,255,255,.16);
+  border-radius:10px;
+  padding:8px;
+  background:rgba(6,10,24,.45);
+}
+.ub-side-panel .ub-side-title{
+  font:700 10px/1.2 var(--font-mono);
+  color:#9deeff;
+  letter-spacing:1px;
+  margin-bottom:6px;
+}
+.ub-side-panel ul{
+  margin:0;
+  padding-left:16px;
+  color:rgba(255,255,255,.72);
+  font-size:10px;
+  line-height:1.45;
+}
 .ub-unit-card{ position:relative; flex:0 0 auto; width:86px; border:1px solid rgba(157,238,255,.35); border-radius:10px; padding:4px; background:rgba(0,0,0,.24); display:flex; flex-direction:column; gap:4px; align-items:center; touch-action:none; user-select:none; -webkit-user-select:none; cursor:grab; }
 .ub-unit-icon{ width:64px; height:64px; border:1px solid rgba(157,238,255,.3); background:radial-gradient(circle at 50% 50%, rgba(157,238,255,.12), rgba(0,0,0,.2)); }
 .ub-unit-meta{ font:600 9px/1.15 var(--font-mono); color:#c8f4ff; text-align:center; word-break:break-word; }
@@ -1024,6 +1069,17 @@ body.modal-lock-scroll{ overflow:hidden; }
 }
 .menu-actions button{ flex:1; min-width:190px; }
 #unitBattleModal .menu-actions button{ flex:0 0 auto; min-width:0; }
+@media (max-width:980px){
+  .ub-modal-layout{ grid-template-columns:minmax(0,1fr); }
+  .ub-side-col{ order:-1; }
+}
+@media (max-width:720px){
+  #unitBattleModal .ub-modal-card{ width:min(100vw,100vw); max-height:100vh; border-radius:0; }
+  .ub-modal-head{ align-items:stretch; }
+  .ub-modal-head #btnUbClose{ align-self:flex-start; }
+  .ub-toolbar-row{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .ub-unit-card{ width:82px; }
+}
 
 /* hide workshop SAVE */
 #btnSaveBuilds{ display:none !important; }
@@ -2008,20 +2064,48 @@ input[type="checkbox"] {
 
 <div id="unitBattleModal" aria-hidden="true">
   <div class="ub-modal-card cyber-panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">
-      <div class="ub-title" style="margin:0">UNIT BATTLE · 分队导入对战</div>
+    <div class="ub-modal-head">
+      <div class="ub-modal-title-main">
+        <div class="ub-title" style="margin:0">UNIT BATTLE · 分队导入对战</div>
+        <div class="muted ub-modal-sub">完整保留队伍管理 / 单位导入 / 随机补员 / 胜者导出等全部能力。支持电脑与手机布局自适配：桌面双栏，移动端单栏。</div>
+      </div>
       <button id="btnUbClose" class="mini-btn" style="border-color:rgba(255,255,255,0.3);color:#bbb">CLOSE</button>
     </div>
-    <div class="muted" style="font-size:10px">先创建队伍，再给每个队伍添加兵种。队伍纵向堆叠，队伍内兵种横向滚动。进入战斗后先布置堡垒，再拖动半透明体调整刷怪点。</div>
-    <div class="menu-actions" style="margin-top:8px;justify-content:flex-start;gap:8px">
-      <button id="btnUbAddTeam" class="mini-btn" style="border-color:#9deeff;color:#9deeff">新增队伍</button>
-      <button id="btnUbExportAll" class="mini-btn" style="border-color:#b8a6ff;color:#b8a6ff">导出全部队伍</button>
-      <button id="btnUbImportAll" class="mini-btn" style="border-color:#9dffad;color:#9dffad">导入全部队伍</button>
-      <button id="btnUbClear" class="mini-btn" style="border-color:#ff9b72;color:#ff9b72">清空队伍</button>
-      <button id="btnUbStart" class="mini-btn" style="border-color:#7ef9c0;color:#7ef9c0">开始兵种对战</button>
-      <button id="btnUbExportWinner" class="mini-btn" style="border-color:#ffd28a;color:#ffd28a">导出胜者</button>
+    <div class="ub-modal-layout">
+      <div class="ub-main-col">
+        <div class="ub-toolbar">
+          <div class="ub-toolbar-row">
+            <button id="btnUbAddTeam" class="mini-btn" style="border-color:#9deeff;color:#9deeff">新增队伍</button>
+            <button id="btnUbStart" class="mini-btn" style="border-color:#7ef9c0;color:#7ef9c0">开始兵种对战</button>
+            <button id="btnUbClear" class="mini-btn" style="border-color:#ff9b72;color:#ff9b72">清空队伍</button>
+          </div>
+          <div class="ub-toolbar-row">
+            <button id="btnUbExportAll" class="mini-btn" style="border-color:#b8a6ff;color:#b8a6ff">导出全部队伍</button>
+            <button id="btnUbImportAll" class="mini-btn" style="border-color:#9dffad;color:#9dffad">导入全部队伍</button>
+            <button id="btnUbExportWinner" class="mini-btn" style="border-color:#ffd28a;color:#ffd28a">导出胜者</button>
+          </div>
+        </div>
+        <div id="ubList" class="ub-list"></div>
+      </div>
+      <div class="ub-side-col">
+        <div class="ub-side-panel">
+          <div class="ub-side-title">流程建议</div>
+          <ul>
+            <li>先创建至少 2 支队伍，再为每支队伍添加兵种。</li>
+            <li>队伍卡片纵向排列，队内兵种横向滚动。</li>
+            <li>开始后先布置堡垒，再拖拽半透明单位调整刷怪点。</li>
+          </ul>
+        </div>
+        <div class="ub-side-panel">
+          <div class="ub-side-title">快捷提示</div>
+          <ul>
+            <li>点兵种卡可复制其 JSON（失败会写入 I/O 便于手动复制）。</li>
+            <li>支持“随机兵种”快速填充，便于压力测试。</li>
+            <li>战斗结束后可直接导出胜者兵种。</li>
+          </ul>
+        </div>
+      </div>
     </div>
-    <div id="ubList" class="ub-list"></div>
   </div>
 </div>
 <div id="ubImportModal" aria-hidden="true">
@@ -9402,8 +9486,10 @@ drawEnemyGenericBody(ctx, e, b, col, R0, rot, Game.time);
   }
 
   // ================= Emitter System (弹幕组模块化) =================
-  function materializeEmitterSpec(emSpec){
+  function materializeEmitterSpec(emSpec, opts = {}){
     if (!emSpec) return null;
+    const catalog = opts.catalog || EmitterCatalog || {};
+    const fallbackType = opts.fallbackType || 'AIM';
 
     if (typeof emSpec.nextCd === 'function' && typeof emSpec.fire === 'function'){
       return emSpec;
@@ -9415,24 +9501,26 @@ drawEnemyGenericBody(ctx, e, b, col, R0, rot, Game.time);
       if (ci){
         try{
           const ser = (ci.isWrapper || ci.wrapperType) ? ci : serializeEmitterRecursive(ci);
-          const rebuilt = deserializeEmitterRecursive(ser);
+          const rebuilt = deserializeEmitterRecursive(ser, { catalog, fallbackType });
           if (rebuilt && typeof rebuilt.nextCd === 'function' && typeof rebuilt.fire === 'function') return rebuilt;
         }catch(_){ }
       }
       // final fallback: try cfg as base emitter
       const cfg = emSpec.cfg || {};
-      const baseFactory = EmitterCatalog[cfg.type || 'AIM'] || EmitterCatalog.AIM;
+      const baseFactory = catalog[cfg.type || fallbackType] || catalog[fallbackType];
+      if (!baseFactory) return null;
       return baseFactory(cfg);
     }
 
     if (emSpec.isWrapper || emSpec.wrapperType){
       try{
-        const rebuilt = deserializeEmitterRecursive(emSpec);
+        const rebuilt = deserializeEmitterRecursive(emSpec, { catalog, fallbackType });
         if (rebuilt && typeof rebuilt.nextCd === 'function' && typeof rebuilt.fire === 'function') return rebuilt;
       }catch(_){ }
     }
 
-    const factory = EmitterCatalog[emSpec.type] || EmitterCatalog.AIM;
+    const factory = catalog[emSpec.type] || catalog[fallbackType];
+    if (!factory) return null;
     return factory(emSpec.cfg || emSpec);
   }
 
@@ -12993,7 +13081,7 @@ function setupPlayerEmittersFromBuild(build){
   const graph = Array.isArray(build?.emitterSpecs) ? build.emitterSpecs : null;
   if (graph && graph.length){
     for (const node of graph){
-      const em = materializeEmitterSpec(node);
+      const em = materializeEmitterSpec(node, { catalog: PlayerEmitterCatalog, fallbackType: 'AIM' });
       if (!em) continue;
       em.type = em.type || (node?.type || node?.wrapperType || '_GRAPH');
       em.cd = 0.15 + Math.random()*0.35;
@@ -13056,7 +13144,7 @@ function setupRivalEmittersFromBuild(e, build){
   const graph = Array.isArray(b.emitterSpecs) ? b.emitterSpecs : null;
   if (graph && graph.length){
     for (const node of graph){
-      const em = materializeEmitterSpec(node);
+      const em = materializeEmitterSpec(node, { catalog: RivalCatalog, fallbackType: 'AIM' });
       if (!em) continue;
       em.type = em.type || (node?.type || node?.wrapperType || '_GRAPH');
       em.cd = 0.15 + Math.random()*0.35;
@@ -18732,13 +18820,15 @@ function serializeEmitterRecursive(em) {
   };
 }
 
-function deserializeEmitterRecursive(data) {
+function deserializeEmitterRecursive(data, opts = {}) {
   if (!data) return null;
+  const catalog = opts.catalog || EmitterCatalog || {};
+  const fallbackType = opts.fallbackType || 'AIM';
   if (data.wrapperType === 'INTERLEAVE') {
     const wrapperFn = CompositeWrappers['INTERLEAVE'];
     if (!wrapperFn) return null;
-    const factoryA = () => deserializeEmitterRecursive(data.innerA);
-    const factoryB = () => deserializeEmitterRecursive(data.innerB);
+    const factoryA = () => deserializeEmitterRecursive(data.innerA, opts);
+    const factoryB = () => deserializeEmitterRecursive(data.innerB, opts);
     const em = wrapperFn(factoryA, { ...(data.compCfg || {}), factoryB });
     if (em && data.cd != null) em.cd = data.cd;
     return em;
@@ -18746,12 +18836,12 @@ function deserializeEmitterRecursive(data) {
   if (data.isWrapper) {
     const wrapperFn = CompositeWrappers[data.wrapperType];
     if (!wrapperFn) return null;
-    const innerFactory = () => deserializeEmitterRecursive(data.inner || data.innerA || data.innerB);
+    const innerFactory = () => deserializeEmitterRecursive(data.inner || data.innerA || data.innerB, opts);
     const em = wrapperFn(innerFactory, data.compCfg || {});
     if (em && data.cd != null) em.cd = data.cd;
     return em;
   }
-  const factory = EmitterCatalog[data.type || 'AIM'];
+  const factory = catalog[data.type || fallbackType] || catalog[fallbackType];
   if (!factory) return null;
   return factory({ baseCd: data.cd, speed: data.speed, mods: data.mods || [] });
 }

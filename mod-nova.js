@@ -697,6 +697,8 @@ NEPForge.installShim({
     }
 
     let _novaUiTab = 'mods';
+    let _selectedModId = null;
+    let _installDraft = '';
 
     function _renderTab(container) {
       container.innerHTML = '';
@@ -825,7 +827,102 @@ NEPForge.installShim({
           empty.textContent = 'No Nova mods installed';
           modSection.appendChild(empty);
         } else {
-          topLevelMods.forEach(rec => modSection.appendChild(_buildCard(rec)));
+          topLevelMods.forEach(rec => modSection.appendChild(_buildCard(rec, {
+            selected: rec.id === _selectedModId,
+            onOpen: () => {
+              _selectedModId = rec.id;
+              _refreshMenuTab();
+            },
+          })));
+          const selected = _mods.get(_selectedModId);
+          if (selected) {
+            const detail = document.createElement('div');
+            detail.style.cssText = 'margin-top:8px;padding:8px;border:1px solid rgba(82,230,255,0.35);background:rgba(82,230,255,0.08);';
+            detail.appendChild(mkSectionTitle(`Mod Detail · ${selected.desc?.name || selected.id}`, '#52E6FF'));
+
+            const meta = document.createElement('div');
+            meta.style.cssText = 'font-size:10px;color:#95b8bf;margin-bottom:8px;line-height:1.4;';
+            meta.textContent = `id=${selected.id} · loaded=${selected.loaded ? 'yes' : 'no'} · subMods=${selected._subMods?.length || 0}`;
+            detail.appendChild(meta);
+
+            const snap = selected.state?.snapshot?.() || {};
+            const keys = Object.keys(snap).filter(k => !k.startsWith('_')).sort();
+            const mkStateRow = (path, val) => {
+              const row = document.createElement('div');
+              row.style.cssText = 'display:grid;grid-template-columns:120px 1fr auto;gap:6px;align-items:center;margin-bottom:6px;';
+              const k = document.createElement('div');
+              k.style.cssText = 'font-family:monospace;font-size:10px;color:#9ed8e1;word-break:break-all;';
+              k.textContent = path;
+              const input = document.createElement('input');
+              input.value = typeof val === 'string' ? val : JSON.stringify(val);
+              input.style.cssText = 'padding:4px;background:#060d12;border:1px solid rgba(82,230,255,0.28);color:#d7f2f8;font-family:monospace;font-size:10px;';
+              const apply = mkMiniBtn('APPLY', '#52E6FF', () => {
+                let parsed = input.value;
+                try { parsed = JSON.parse(input.value); } catch(_) {}
+                selected.state?.set?.(path, parsed);
+                UIManager.toast(`state.${path} updated`, '#52E6FF', 1200);
+                _refreshMenuTab();
+              });
+              row.appendChild(k);
+              row.appendChild(input);
+              row.appendChild(apply);
+              return row;
+            };
+
+            if (!keys.length) {
+              const emptyState = document.createElement('div');
+              emptyState.style.cssText = 'font-size:10px;color:#7f9ca2;margin-bottom:6px;';
+              emptyState.textContent = 'This mod has no editable state keys yet.';
+              detail.appendChild(emptyState);
+            } else {
+              keys.forEach(key => detail.appendChild(mkStateRow(key, snap[key])));
+            }
+
+            const quickAdd = document.createElement('div');
+            quickAdd.style.cssText = 'display:grid;grid-template-columns:1fr 1fr auto;gap:6px;margin-top:8px;';
+            const pathInput = document.createElement('input');
+            pathInput.placeholder = 'new path (e.g. nested.flag)';
+            pathInput.style.cssText = 'padding:4px;background:#060d12;border:1px solid rgba(82,230,255,0.28);color:#d7f2f8;font-family:monospace;font-size:10px;';
+            const valueInput = document.createElement('input');
+            valueInput.placeholder = 'value (JSON or text)';
+            valueInput.style.cssText = pathInput.style.cssText;
+            quickAdd.appendChild(pathInput);
+            quickAdd.appendChild(valueInput);
+            quickAdd.appendChild(mkMiniBtn('ADD / SET', '#50DC64', () => {
+              const path = String(pathInput.value || '').trim();
+              if (!path) return;
+              let parsed = valueInput.value;
+              try { parsed = JSON.parse(valueInput.value); } catch(_) {}
+              selected.state?.set?.(path, parsed);
+              UIManager.toast(`state.${path} saved`, '#50DC64', 1200);
+              _refreshMenuTab();
+            }));
+            detail.appendChild(quickAdd);
+
+            const bulk = document.createElement('textarea');
+            bulk.style.cssText = 'width:100%;height:110px;margin-top:8px;background:#061017;border:1px solid rgba(82,230,255,0.28);color:#bfeaf4;font-family:monospace;font-size:10px;padding:6px;';
+            bulk.value = JSON.stringify(snap, null, 2);
+            detail.appendChild(bulk);
+            const bulkBtnRow = document.createElement('div');
+            bulkBtnRow.style.cssText = 'display:flex;gap:6px;margin-top:6px;';
+            bulkBtnRow.appendChild(mkMiniBtn('APPLY SNAPSHOT', '#FFB020', () => {
+              try {
+                const obj = JSON.parse(bulk.value || '{}');
+                if (!obj || typeof obj !== 'object') throw new Error('snapshot must be object');
+                selected.state?.reset?.(obj);
+                UIManager.toast('State snapshot applied', '#FFB020', 1200);
+                _refreshMenuTab();
+              } catch (e) {
+                UIManager.toast(`Snapshot parse error: ${e.message}`, '#FF2F57', 2200);
+              }
+            }));
+            bulkBtnRow.appendChild(mkMiniBtn('CLOSE DETAIL', '#999', () => {
+              _selectedModId = null;
+              _refreshMenuTab();
+            }));
+            detail.appendChild(bulkBtnRow);
+            modSection.appendChild(detail);
+          }
         }
         target.appendChild(modSection);
       };
@@ -843,17 +940,205 @@ NEPForge.installShim({
         target.appendChild(box);
       };
 
+      const mkMiniBtn = (label, color, onClick) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.style.cssText = `padding:4px 6px;font-family:monospace;font-size:9px;border:1px solid ${color}66;background:${color}18;color:${color};cursor:pointer;`;
+        b.addEventListener('click', onClick);
+        return b;
+      };
+
+      const installCodeSnippet = (code, { runDirect = false } = {}) => {
+        if (!code?.trim()) return;
+        if (runDirect) {
+          try {
+            new Function('"use strict";return function(Nova, NEPForge){\n' + code + '\n}')()(window.Nova, window.NEPForge);
+            UIManager.toast('Example installed', '#50DC64', 1400);
+            _refreshMenuTab();
+          } catch (e) {
+            UIManager.toast(`Example error: ${e.message}`, '#FF2F57', 2200);
+          }
+          return;
+        }
+        const area = body.querySelector('[data-nova-install-area]');
+        if (area) area.value = code;
+        else _installDraft = code;
+        if (_novaUiTab !== 'install') activateTab('install');
+      };
+
+      const renderExampleTab = (target) => {
+        const examples = [
+          {
+            title: 'Pulse Shield',
+            desc: '每 8 秒恢复一次护盾并显示提示。',
+            code: `Nova.def('example-pulse-shield', {\n  name:'Pulse Shield', version:'1.0',\n  state:{ cd:0 },\n  tick(ctx, dt){\n    ctx.state.cd += dt;\n    if (ctx.state.cd < 8) return;\n    ctx.state.cd = 0;\n    const p = ctx.resolver.get('Player');\n    if (p) {\n      p.shield = (p.shield || 0) + 20;\n      window.textPop?.((window.W||400)*0.5, (window.H||600)-90, 'SHIELD +20', '#52E6FF');\n    }\n  }\n});`
+          },
+          {
+            title: 'Wave Budget HUD',
+            desc: '在屏幕左上角显示当前波次/敌人数。',
+            code: `Nova.def('example-wave-hud', {\n  name:'Wave Budget HUD', version:'1.0',\n  render:{\n    post(g){\n      const Game = window.Game || null;\n      const enemies = window.enemies || [];\n      if (!g?.fillText) return;\n      g.save();\n      g.fillStyle = '#B36CFF';\n      g.font = '700 12px Consolas';\n      g.fillText('Wave ' + (Game?.wave||0) + '  Enemy ' + enemies.length, 10, 20);\n      g.restore();\n    }\n  }\n});`
+          },
+          {
+            title: 'Auto Repair',
+            desc: '血量低于 25% 时每秒小幅修复。',
+            code: `Nova.def('example-auto-repair', {\n  name:'Auto Repair', version:'1.0',\n  tick(ctx, dt){\n    const p = ctx.resolver.get('Player');\n    if (!p?.maxHp) return;\n    if (p.hp / p.maxHp < 0.25) p.hp = Math.min(p.maxHp, p.hp + 18 * dt);\n  }\n});`
+          }
+        ];
+
+        renderInfoCard(target, 'Example Workshop', [
+          '你可以一键把模板填充到 INSTALL 页，或直接运行。',
+          '所有模板都使用 Nova.def，可继续修改后保存到 profile。',
+          '建议先安装一个模板并在 DIAG 页面确认状态。'
+        ], '#9dffad');
+
+        examples.forEach((item) => {
+          const card = document.createElement('div');
+          card.style.cssText = 'margin-top:8px;padding:8px;border:1px solid rgba(157,255,173,0.28);background:rgba(157,255,173,0.06);';
+          card.appendChild(mkSectionTitle(item.title, '#9dffad'));
+          const d = document.createElement('div');
+          d.style.cssText = 'font-size:10px;color:#9cb5a0;margin-bottom:6px;';
+          d.textContent = item.desc;
+          card.appendChild(d);
+          const pre = document.createElement('pre');
+          pre.style.cssText = 'margin:0 0 6px 0;padding:6px;background:#070d0a;border:1px solid rgba(157,255,173,0.2);font-size:9px;line-height:1.35;white-space:pre-wrap;color:#b9e8c2;';
+          pre.textContent = item.code;
+          card.appendChild(pre);
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;gap:6px;';
+          row.appendChild(mkMiniBtn('PASTE TO INSTALL', '#9dffad', () => installCodeSnippet(item.code)));
+          row.appendChild(mkMiniBtn('RUN NOW', '#52E6FF', () => installCodeSnippet(item.code, { runDirect: true })));
+          card.appendChild(row);
+          target.appendChild(card);
+        });
+      };
+
+      const renderProfileTab = (target) => {
+        const rawProfiles = SharedStore.get('nova', '__profiles__', {});
+        const all = (rawProfiles && typeof rawProfiles === 'object') ? rawProfiles : {};
+        const names = Object.keys(all).sort((a, b) => (all[b]?.savedAt || 0) - (all[a]?.savedAt || 0));
+        const top = document.createElement('div');
+        top.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+        const input = document.createElement('input');
+        input.placeholder = 'profile name...';
+        input.style.cssText = 'flex:1;padding:6px;background:#09060f;border:1px solid rgba(179,108,255,0.35);color:#d8c6ff;font-family:monospace;font-size:10px;';
+        top.appendChild(input);
+        top.appendChild(mkMiniBtn('SAVE CURRENT', '#B36CFF', () => {
+          const name = (input.value || '').trim() || `profile-${Date.now()}`;
+          const res = window.Nova?.profile?.save(name);
+          UIManager.toast(`Saved ${res?.count || 0} mods to ${name}`, '#B36CFF', 1700);
+          _refreshMenuTab();
+        }));
+        top.appendChild(mkMiniBtn('EXPORT JSON', '#52E6FF', () => {
+          const json = JSON.stringify(all, null, 2);
+          prompt('Copy profiles JSON', json);
+        }));
+        target.appendChild(top);
+
+        const importBtnRow = document.createElement('div');
+        importBtnRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+        importBtnRow.appendChild(mkMiniBtn('IMPORT JSON', '#FFB020', () => {
+          const txt = prompt('Paste profiles JSON');
+          if (!txt) return;
+          try {
+            const obj = JSON.parse(txt);
+            const prev = SharedStore.get('nova', '__profiles__', {});
+            const safePrev = (prev && typeof prev === 'object') ? prev : {};
+            const safeObj = (obj && typeof obj === 'object') ? obj : {};
+            const merged = { ...safePrev, ...safeObj };
+            SharedStore.set('nova', '__profiles__', merged, 'nova-forge');
+            UIManager.toast('Profiles imported', '#50DC64', 1600);
+            _refreshMenuTab();
+          } catch (e) {
+            UIManager.toast(`Import failed: ${e.message}`, '#FF2F57', 2200);
+          }
+        }));
+        importBtnRow.appendChild(mkMiniBtn('CLEAR ALL', '#FF2F57', () => {
+          if (!confirm('Delete all Nova profiles?')) return;
+          SharedStore.set('nova', '__profiles__', {}, 'nova-forge');
+          _refreshMenuTab();
+        }));
+        target.appendChild(importBtnRow);
+
+        if (!names.length) {
+          renderInfoCard(target, 'Profile Area', ['暂无 profile。先安装 mod 后点击 SAVE CURRENT。'], '#B36CFF');
+          return;
+        }
+
+        names.forEach((name) => {
+          const meta = all[name] || {};
+          const card = document.createElement('div');
+          card.style.cssText = 'padding:8px;margin-bottom:6px;border:1px solid rgba(179,108,255,0.26);background:rgba(179,108,255,0.08);';
+          card.appendChild(mkSectionTitle(name, '#d7b3ff'));
+          const time = new Date(meta.savedAt || Date.now()).toLocaleString();
+          const line = document.createElement('div');
+          line.style.cssText = 'font-size:10px;color:#9f90b8;margin-bottom:6px;';
+          line.textContent = `savedAt: ${time} · mods: ${(meta.mods || []).length}`;
+          card.appendChild(line);
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;';
+          row.appendChild(mkMiniBtn('LOAD (CLEAR)', '#FFB020', () => { window.Nova?.profile?.load(name, { clear: true }); _refreshMenuTab(); }));
+          row.appendChild(mkMiniBtn('LOAD (MERGE)', '#52E6FF', () => { window.Nova?.profile?.load(name, { clear: false }); _refreshMenuTab(); }));
+          row.appendChild(mkMiniBtn('DELETE', '#FF2F57', () => { window.Nova?.profile?.remove(name); _refreshMenuTab(); }));
+          row.appendChild(mkMiniBtn('DUPLICATE', '#50DC64', () => {
+            const next = prompt('New profile name', `${name}-copy`);
+            if (!next) return;
+            all[next] = { ...meta, savedAt: Date.now(), mods: deepClone(meta.mods || []) };
+            SharedStore.set('nova', '__profiles__', all, 'nova-forge');
+            _refreshMenuTab();
+          }));
+          card.appendChild(row);
+          target.appendChild(card);
+        });
+      };
+
+      const renderDiagTab = (target) => {
+        const snap = window.Nova?.inspect?.() || {};
+        const doctor = window.Nova?.doctor?.() || {};
+        const sec = window.Nova?.securityReport?.() || {};
+        const graph = window.Nova?.graph?.() || { nodes: [], edges: [] };
+        const conflicts = window.NEPForge?.patch?.diagnostics?.conflicts?.() || [];
+
+        const tools = document.createElement('div');
+        tools.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;';
+        tools.appendChild(mkMiniBtn('REFRESH', '#52E6FF', () => _refreshMenuTab()));
+        tools.appendChild(mkMiniBtn('RESCAN GLOBALS', '#FFB020', () => { window.NEPForge?.rescan?.(); _refreshMenuTab(); }));
+        tools.appendChild(mkMiniBtn('COPY REPORT', '#B36CFF', () => {
+          const report = JSON.stringify({ snap, doctor, sec, graph: { nodes: graph.nodes?.length || 0, edges: graph.edges?.length || 0 }, conflicts }, null, 2);
+          prompt('Copy diagnostics report', report);
+        }));
+        target.appendChild(tools);
+
+        renderInfoCard(target, 'Diagnostics Core', [
+          `mods: ${snap.mods || 0} / topLevel: ${doctor.topLevel || 0}`,
+          `services: ${snap.services || 0} / events: ${snap.events || 0}`,
+          `tickers: ${doctor.ticking || 0} / pluginHosts: ${doctor.pluginHosts || 0}`,
+          `graph: nodes ${graph.nodes?.length || 0} · edges ${graph.edges?.length || 0}`,
+          `invalidIds: ${(sec.invalidIds || []).length} · conflicts: ${conflicts.length}`,
+        ], '#52E6FF');
+
+        const failed = doctor.failed || [];
+        renderInfoCard(target, 'Failed Mods', failed.length
+          ? failed.map(f => `${f.id}: ${String(f.error || '').slice(0, 160)}`)
+          : ['No failed mods detected.'], '#FFB020');
+      };
+
       const renderBody = () => {
         body.innerHTML = '';
         if (_novaUiTab === 'mods') return renderMods(body);
-        if (_novaUiTab === 'install') return renderInstallPanel(body);
-        if (_novaUiTab === 'example') {
-          renderInfoCard(body, 'Example Area', [
-            '在 INSTALL 页粘贴 Nova.def("id",{...}) 代码可立即安装。',
-            '推荐先创建最小例子：state + panel + tick。',
-            '可通过 Nova.unload(id) / Nova.reload(id) 热更新。'
-          ], '#9dffad');
+        if (_novaUiTab === 'install') {
+          renderInstallPanel(body);
+          const ta = body.querySelector('textarea');
+          if (ta) {
+            ta.setAttribute('data-nova-install-area', '1');
+            if (_installDraft) {
+              ta.value = _installDraft;
+              _installDraft = '';
+            }
+          }
           return;
+        }
+        if (_novaUiTab === 'example') {
+          return renderExampleTab(body);
         }
         if (_novaUiTab === 'graph') {
           const topLevelMods = [..._mods.values()].filter(r => !r.parentId);
@@ -862,32 +1147,26 @@ NEPForge.installShim({
           return;
         }
         if (_novaUiTab === 'profile') {
-          const names = window.Nova?.profile?.list?.() || [];
-          renderInfoCard(body, 'Profile Area', names.length ? names.map(n => `• ${n}`) : ['暂无 profile，可在 MODS 页点击 SAVE PROFILE 创建。'], '#B36CFF');
-          return;
+          return renderProfileTab(body);
         }
         if (_novaUiTab === 'diag') {
-          const snap = window.Nova?.inspect?.() || {};
-          renderInfoCard(body, 'Diagnostics', [
-            `mods: ${snap.mods || 0}`,
-            `services: ${snap.services || 0}`,
-            `store keys: ${snap.storeKeys || 0}`,
-            `events: ${snap.events || 0}`
-          ], '#52E6FF');
+          return renderDiagTab(body);
         }
       };
 
       activateTab(tabDefs.some(t => t.key === _novaUiTab) ? _novaUiTab : 'mods');
     }
 
-    function _buildCard(record) {
+    function _buildCard(record, opts = {}) {
       const { id, desc, state, _subMods, _err, loaded } = record;
+      const { onOpen = null, selected = false } = opts;
       const card = document.createElement('div');
       card.style.cssText = `
         margin-bottom:7px;padding:7px;
-        background:${loaded ? 'rgba(179,108,255,0.05)' : 'rgba(255,47,87,0.04)'};
-        border:1px solid ${loaded ? 'rgba(179,108,255,0.28)' : 'rgba(255,47,87,0.28)'};
-        border-left:2px solid ${loaded ? '#B36CFF' : '#FF2F57'};
+        background:${selected ? 'rgba(82,230,255,0.08)' : (loaded ? 'rgba(179,108,255,0.05)' : 'rgba(255,47,87,0.04)')};
+        border:1px solid ${selected ? 'rgba(82,230,255,0.38)' : (loaded ? 'rgba(179,108,255,0.28)' : 'rgba(255,47,87,0.28)')};
+        border-left:2px solid ${selected ? '#52E6FF' : (loaded ? '#B36CFF' : '#FF2F57')};
+        cursor:pointer;
       `;
 
       // Title row
@@ -956,8 +1235,17 @@ NEPForge.installShim({
       }
 
       // Buttons
-      card.querySelector('[data-action="reload"]')?.addEventListener('click', () => Nova.reload(id));
-      card.querySelector('[data-action="unload"]')?.addEventListener('click', () => Nova.unload(id));
+      card.querySelector('[data-action="reload"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Nova.reload(id);
+      });
+      card.querySelector('[data-action="unload"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Nova.unload(id);
+      });
+      if (typeof onOpen === 'function') {
+        card.addEventListener('click', () => onOpen(record));
+      }
 
       return card;
     }
@@ -1218,7 +1506,8 @@ NEPForge.installShim({
         save(name) {
           const key = String(name || '').trim();
           if (!key) throw new Error('Nova.profile.save: name required');
-          const all = SharedStore.get('nova', '__profiles__', {});
+          const prev = SharedStore.get('nova', '__profiles__', {});
+          const all = (prev && typeof prev === 'object') ? prev : {};
           const pack = _snapshotTopLevelDescriptors();
           all[key] = {
             savedAt: Date.now(),
@@ -1228,12 +1517,14 @@ NEPForge.installShim({
           return { key, count: pack.length };
         },
         list() {
-          const all = SharedStore.get('nova', '__profiles__', {});
+          const prev = SharedStore.get('nova', '__profiles__', {});
+          const all = (prev && typeof prev === 'object') ? prev : {};
           return Object.keys(all);
         },
         load(name, { clear = true } = {}) {
           const key = String(name || '').trim();
-          const all = SharedStore.get('nova', '__profiles__', {});
+          const prev = SharedStore.get('nova', '__profiles__', {});
+          const all = (prev && typeof prev === 'object') ? prev : {};
           const profile = all[key];
           if (!profile) throw new Error(`Nova.profile.load: profile "${key}" not found`);
           if (clear) window.Nova?.unloadAll?.();
@@ -1241,7 +1532,8 @@ NEPForge.installShim({
         },
         remove(name) {
           const key = String(name || '').trim();
-          const all = SharedStore.get('nova', '__profiles__', {});
+          const prev = SharedStore.get('nova', '__profiles__', {});
+          const all = (prev && typeof prev === 'object') ? prev : {};
           if (!all[key]) return false;
           delete all[key];
           SharedStore.set('nova', '__profiles__', all, 'nova-forge');

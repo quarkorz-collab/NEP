@@ -146,7 +146,7 @@ Nova.def('nova-aegis-sentinel', {
 
     hardenBag.tickFn = function(dt) {
       if (!S.enabled || isBooting()) return;
-      if ((Game?.tick || 0) % step === 0) { driftCheck(); conflicts(); }
+      if ((window.Game?.tick || 0) % step === 0) { driftCheck(); conflicts(); }
       if (dt > 0.18) ringPush('log', 'frame spike');
       if ((S.alerts || 0) > 24 && !S.strictMode) {
         S.strictMode = true;
@@ -156,7 +156,12 @@ Nova.def('nova-aegis-sentinel', {
 
     hardenBag.waveFn = function(wave) {
       if (!S.enabled || isBooting()) return;
-      if (wave % 5 === 0) textPop?.((W||400)*0.5, (H||600)-80, 'AEGIS '+wave+' B'+(S.blocked||0)+' H'+(S.healed||0), '#52E6FF');
+      const pop = window.textPop;
+      const w = window.W || 400;
+      const h = window.H || 600;
+      if (wave % 5 === 0 && typeof pop === 'function') {
+        pop(w * 0.5, h - 80, 'AEGIS ' + wave + ' B' + (S.blocked || 0) + ' H' + (S.healed || 0), '#52E6FF');
+      }
     };
   },
   events: {

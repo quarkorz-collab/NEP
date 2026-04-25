@@ -696,6 +696,8 @@ NEPForge.installShim({
       }
     }
 
+    let _novaUiTab = 'mods';
+
     function _renderTab(container) {
       container.innerHTML = '';
 
@@ -708,14 +710,47 @@ NEPForge.installShim({
       `;
       container.appendChild(hdr);
 
-      // ── Install Panel ─────────────────────────────────────────
-      const installDiv = document.createElement('div');
-      installDiv.style.cssText = 'margin-bottom:10px;';
-      const ta = document.createElement('textarea');
-      ta.placeholder = '// Nova.def("my-mod", { ... })';
-      ta.style.cssText = 'width:100%;height:72px;background:#060614;color:#ccc;border:1px solid rgba(179,108,255,0.25);font-family:monospace;font-size:9px;padding:6px;resize:vertical;';
-      const btnRow = document.createElement('div');
-      btnRow.style.cssText = 'display:flex;gap:5px;margin-top:5px;';
+      const tabDefs = [
+        { key: 'mods', label: 'MODS' },
+        { key: 'install', label: 'INSTALL' },
+        { key: 'example', label: 'EXAMPLE' },
+        { key: 'graph', label: 'GRAPH' },
+        { key: 'profile', label: 'PROFILE' },
+        { key: 'diag', label: 'DIAG' },
+      ];
+
+      const tabBar = document.createElement('div');
+      tabBar.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;';
+      const tabButtons = {};
+      const activateTab = (key) => {
+        _novaUiTab = key;
+        Object.entries(tabButtons).forEach(([k, btn]) => {
+          const on = k === key;
+          btn.style.color = on ? '#B36CFF' : 'rgba(255,255,255,0.68)';
+          btn.style.borderColor = on ? 'rgba(179,108,255,0.9)' : 'rgba(255,255,255,0.18)';
+          btn.style.background = on ? 'rgba(179,108,255,0.15)' : 'rgba(0,0,0,0.18)';
+        });
+        renderBody();
+      };
+      tabDefs.forEach(({ key, label }) => {
+        const btn = document.createElement('button');
+        btn.textContent = label;
+        btn.style.cssText = 'flex:1 1 calc(33.333% - 6px);min-width:120px;padding:6px 8px;font-family:monospace;font-size:10px;letter-spacing:1px;text-transform:uppercase;border:1px solid rgba(255,255,255,0.18);background:rgba(0,0,0,0.18);cursor:pointer;';
+        btn.addEventListener('click', () => activateTab(key));
+        tabButtons[key] = btn;
+        tabBar.appendChild(btn);
+      });
+      container.appendChild(tabBar);
+
+      const body = document.createElement('div');
+      container.appendChild(body);
+
+      const mkSectionTitle = (txt, color = '#B36CFF') => {
+        const el = document.createElement('div');
+        el.style.cssText = `font-size:9px;color:${color};letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;`;
+        el.textContent = txt;
+        return el;
+      };
 
       const mkBtn = (label, col, fn) => {
         const b = document.createElement('button');
@@ -725,7 +760,16 @@ NEPForge.installShim({
         return b;
       };
 
-      btnRow.appendChild(mkBtn('INSTALL', '179,108,255', () => {
+      const renderInstallPanel = (target) => {
+        const installDiv = document.createElement('div');
+        installDiv.style.cssText = 'margin-bottom:10px;';
+        const ta = document.createElement('textarea');
+        ta.placeholder = '// Nova.def("my-mod", { ... })';
+        ta.style.cssText = 'width:100%;height:120px;background:#060614;color:#ccc;border:1px solid rgba(179,108,255,0.25);font-family:monospace;font-size:10px;padding:8px;resize:vertical;';
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;gap:5px;margin-top:5px;';
+
+        btnRow.appendChild(mkBtn('INSTALL', '179,108,255', () => {
         const code = ta.value.trim();
         if (!code) return;
         try {
@@ -735,25 +779,21 @@ NEPForge.installShim({
           UIManager.toast(`Nova error: ${e.message}`, '#FF2F57', 3000);
           _error(`[Nova/tab] Install error: ${e.message}`);
         }
-      }));
-      btnRow.appendChild(mkBtn('CLEAR', '100,100,100', () => { ta.value = ''; }));
-      btnRow.appendChild(mkBtn('HELP', '82,230,255', () => window.Nova?.help()));
+        }));
+        btnRow.appendChild(mkBtn('CLEAR', '100,100,100', () => { ta.value = ''; }));
+        btnRow.appendChild(mkBtn('HELP', '82,230,255', () => window.Nova?.help()));
+        installDiv.appendChild(ta);
+        installDiv.appendChild(btnRow);
+        target.appendChild(installDiv);
+      };
 
-      installDiv.appendChild(ta);
-      installDiv.appendChild(btnRow);
-      container.appendChild(installDiv);
+      const renderMods = (target) => {
+        const modSection = document.createElement('div');
+        const topLevelMods = [..._mods.values()].filter(r => !r.parentId);
+        modSection.appendChild(mkSectionTitle(`Active Mods (${topLevelMods.length})`));
 
-      // ── Mods List ─────────────────────────────────────────────
-      const modSection = document.createElement('div');
-      const topLevelMods = [..._mods.values()].filter(r => !r.parentId);
-
-      const sHdr = document.createElement('div');
-      sHdr.style.cssText = 'font-size:9px;color:#B36CFF;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;';
-      sHdr.textContent = `Active Mods (${topLevelMods.length})`;
-      modSection.appendChild(sHdr);
-
-      const toolbox = document.createElement('div');
-      toolbox.style.cssText = 'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin:0 0 8px 0;';
+        const toolbox = document.createElement('div');
+        toolbox.style.cssText = 'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin:0 0 8px 0;';
       const toolboxBtn = (label, col, fn) => {
         const b = document.createElement('button');
         b.textContent = label;
@@ -761,33 +801,83 @@ NEPForge.installShim({
         b.addEventListener('click', fn);
         return b;
       };
-      toolbox.appendChild(toolboxBtn('RELOAD ALL', '82,230,255', () => window.Nova?.reloadAll()));
-      toolbox.appendChild(toolboxBtn('UNLOAD ALL', '255,47,87', () => window.Nova?.unloadAll()));
-      toolbox.appendChild(toolboxBtn('SAVE PROFILE', '179,108,255', () => {
+        toolbox.appendChild(toolboxBtn('RELOAD ALL', '82,230,255', () => window.Nova?.reloadAll()));
+        toolbox.appendChild(toolboxBtn('UNLOAD ALL', '255,47,87', () => window.Nova?.unloadAll()));
+        toolbox.appendChild(toolboxBtn('SAVE PROFILE', '179,108,255', () => {
         const key = prompt('Profile name?', `profile-${Date.now()}`);
         if (!key) return;
         const res = window.Nova?.profile?.save(key);
         UIManager.toast(`Saved ${res?.count || 0} mods → ${key}`, '#B36CFF', 2000);
-      }));
-      toolbox.appendChild(toolboxBtn('LOAD PROFILE', '255,176,32', () => {
+        }));
+        toolbox.appendChild(toolboxBtn('LOAD PROFILE', '255,176,32', () => {
         const names = window.Nova?.profile?.list?.() || [];
         if (!names.length) { UIManager.toast('No profile found', '#FF2F57', 1800); return; }
         const key = prompt(`Load profile:\n${names.join('\n')}`, names[0]);
         if (!key) return;
         const res = window.Nova?.profile?.load(key, { clear: true });
         UIManager.toast(`Loaded ${res?.restored || 0} mods ← ${key}`, '#FFB020', 2200);
-      }));
-      modSection.appendChild(toolbox);
+        }));
+        modSection.appendChild(toolbox);
 
-      if (topLevelMods.length === 0) {
-        const empty = document.createElement('div');
-        empty.style.cssText = 'color:#222;font-size:11px;text-align:center;padding:16px 0;';
-        empty.textContent = 'No Nova mods installed';
-        modSection.appendChild(empty);
-      } else {
-        topLevelMods.forEach(rec => modSection.appendChild(_buildCard(rec)));
-      }
-      container.appendChild(modSection);
+        if (topLevelMods.length === 0) {
+          const empty = document.createElement('div');
+          empty.style.cssText = 'color:#222;font-size:11px;text-align:center;padding:16px 0;';
+          empty.textContent = 'No Nova mods installed';
+          modSection.appendChild(empty);
+        } else {
+          topLevelMods.forEach(rec => modSection.appendChild(_buildCard(rec)));
+        }
+        target.appendChild(modSection);
+      };
+
+      const renderInfoCard = (target, title, lines = [], color = '#52E6FF') => {
+        const box = document.createElement('div');
+        box.style.cssText = 'padding:8px;border:1px solid rgba(255,255,255,0.14);background:rgba(0,0,0,0.22);font-family:monospace;font-size:10px;color:#9aa;';
+        box.appendChild(mkSectionTitle(title, color));
+        lines.forEach(line => {
+          const row = document.createElement('div');
+          row.style.cssText = 'margin-bottom:4px;line-height:1.4;';
+          row.textContent = line;
+          box.appendChild(row);
+        });
+        target.appendChild(box);
+      };
+
+      const renderBody = () => {
+        body.innerHTML = '';
+        if (_novaUiTab === 'mods') return renderMods(body);
+        if (_novaUiTab === 'install') return renderInstallPanel(body);
+        if (_novaUiTab === 'example') {
+          renderInfoCard(body, 'Example Area', [
+            '在 INSTALL 页粘贴 Nova.def("id",{...}) 代码可立即安装。',
+            '推荐先创建最小例子：state + panel + tick。',
+            '可通过 Nova.unload(id) / Nova.reload(id) 热更新。'
+          ], '#9dffad');
+          return;
+        }
+        if (_novaUiTab === 'graph') {
+          const topLevelMods = [..._mods.values()].filter(r => !r.parentId);
+          const lines = topLevelMods.slice(0, 16).map(r => `${r.id}  ->  subMods:${r._subMods?.length || 0}`);
+          renderInfoCard(body, 'Graph Area', lines.length ? lines : ['暂无已安装 mod，安装后此处展示关系结构。'], '#ffd28a');
+          return;
+        }
+        if (_novaUiTab === 'profile') {
+          const names = window.Nova?.profile?.list?.() || [];
+          renderInfoCard(body, 'Profile Area', names.length ? names.map(n => `• ${n}`) : ['暂无 profile，可在 MODS 页点击 SAVE PROFILE 创建。'], '#B36CFF');
+          return;
+        }
+        if (_novaUiTab === 'diag') {
+          const snap = window.Nova?.inspect?.() || {};
+          renderInfoCard(body, 'Diagnostics', [
+            `mods: ${snap.mods || 0}`,
+            `services: ${snap.services || 0}`,
+            `store keys: ${snap.storeKeys || 0}`,
+            `events: ${snap.events || 0}`
+          ], '#52E6FF');
+        }
+      };
+
+      activateTab(tabDefs.some(t => t.key === _novaUiTab) ? _novaUiTab : 'mods');
     }
 
     function _buildCard(record) {

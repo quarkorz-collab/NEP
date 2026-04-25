@@ -19601,7 +19601,6 @@ function buildPlayerEmitterChips(){
         set.add(k);
       }
       b.emitters = Array.from(set);
-      b.emitterSpecs = []; // 使用简易 chips 时自动回退到基础模式
       clampBuild(b);
       saveBuilds();
       syncWorkshopFromModel(); // 统一回填/刷新
@@ -20146,10 +20145,13 @@ function emitterToUiModel(node){
   const wrappers = [];
   let cur = n;
   while (cur && cur.isWrapper){
+    const branchBNode = (cur.wrapperType === 'INTERLEAVE')
+      ? normalizeSerializedEmitter(cur.innerB || cur.inner)
+      : null;
     wrappers.push({
       wrapperType: cur.wrapperType || '',
       compCfg: deepClone(cur.compCfg || {}),
-      _warnInterleave: (cur.wrapperType === 'INTERLEAVE')
+      innerBNode: branchBNode
     });
     cur = cur.inner || cur.innerA || cur.innerB;
   }
@@ -20183,7 +20185,7 @@ function uiModelToEmitter(model){
         wrapperType: wt,
         compCfg: deepClone(w?.compCfg || {}),
         innerA: cur,
-        innerB: normalizeSerializedEmitter(w?.innerB) || deepClone(cur)
+        innerB: normalizeSerializedEmitter(w?.innerBNode || w?.innerB) || deepClone(cur)
       };
     } else {
       cur = {
@@ -20209,10 +20211,99 @@ function renderWrapperCfgFieldsUI(container, item, wrapIdx, onChanged){
     return;
   }
   if (key==='INTERLEAVE'){
-    const w = document.createElement('div');
-    w.className = 'muted';
-    w.textContent = 'INTERLEAVE 包含双分支，UI 模式仅编辑主分支。完整双分支请切到 JSON 模式。';
-    container.appendChild(w);
+    const ensureBranchB = ()=>{
+      const base = normalizeSerializedEmitter(item.innerBNode);
+      if (base && !base.isWrapper) return base;
+      const fallback = {
+        isWrapper:false,
+        type: 'AIM',
+        mods: [],
+        speed: 220,
+        cd: 1.2
+      };
+      item.innerBNode = fallback;
+      return fallback;
+    };
+    const branchBase = ensureBranchB();
+    const tip = document.createElement('div');
+    tip.className = 'muted';
+    tip.textContent = 'INTERLEAVE：A 分支使用当前主链；B 分支可在此独立编辑。';
+    tip.style.marginBottom = '6px';
+    container.appendChild(tip);
+
+    const bType = document.createElement('div');
+    bType.className = 'field';
+    const bTypeLb = document.createElement('label');
+    bTypeLb.textContent = 'branchBType';
+    const bTypeSel = document.createElement('select');
+    bTypeSel.className = 'forge-extra-select';
+    Object.keys(EmitterCatalog).forEach(k=>{
+      const o = document.createElement('option');
+      o.value = k;
+      o.textContent = k;
+      bTypeSel.appendChild(o);
+    });
+    bTypeSel.value = branchBase.type || 'AIM';
+    bTypeSel.addEventListener('change', ()=>{
+      branchBase.type = bTypeSel.value;
+      item.innerBNode = normalizeSerializedEmitter(branchBase) || branchBase;
+      onChanged?.();
+    });
+    bType.appendChild(bTypeLb);
+    bType.appendChild(bTypeSel);
+    container.appendChild(bType);
+
+    const mkNum = (id, step='0.01')=>{
+      const row = document.createElement('div');
+      row.className = 'field';
+      row.style.marginBottom = '4px';
+      const lb = document.createElement('label');
+      lb.textContent = id;
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.step = step;
+      input.value = String(branchBase[id] ?? (id === 'speed' ? 220 : 1.2));
+      input.addEventListener('change', ()=>{
+        branchBase[id] = +input.value || 0;
+        item.innerBNode = normalizeSerializedEmitter(branchBase) || branchBase;
+        onChanged?.();
+      });
+      row.appendChild(lb);
+      row.appendChild(input);
+      container.appendChild(row);
+    };
+    mkNum('cd', '0.01');
+    mkNum('speed', '1');
+
+    const modsRow = document.createElement('div');
+    modsRow.className = 'field';
+    modsRow.style.marginBottom = '4px';
+    const modsLb = document.createElement('label');
+    modsLb.textContent = 'branchBMods';
+    const modsWrap = document.createElement('div');
+    modsWrap.className = 'chip-pick';
+    modsWrap.style.maxHeight = '96px';
+    modsWrap.style.overflowY = 'auto';
+    const selected = new Set(Array.isArray(branchBase.mods) ? branchBase.mods : []);
+    Object.keys(BulletAffixCatalog).forEach(k=>{
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pick-chip';
+      btn.textContent = k;
+      btn.classList.toggle('on', selected.has(k));
+      btn.addEventListener('click', ()=>{
+        if (selected.has(k)) selected.delete(k);
+        else selected.add(k);
+        branchBase.mods = Array.from(selected).slice(0, 24);
+        item.innerBNode = normalizeSerializedEmitter(branchBase) || branchBase;
+        btn.classList.toggle('on', selected.has(k));
+        onChanged?.();
+      });
+      modsWrap.appendChild(btn);
+    });
+    modsRow.appendChild(modsLb);
+    modsRow.appendChild(modsWrap);
+    container.appendChild(modsRow);
   }
   if (!defs.length){
     const m = document.createElement('div');

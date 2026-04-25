@@ -489,6 +489,7 @@ const PatchMgr = (() => {
     const dispatcher = function (...args) {
       const ctx  = this;
       const hooks = dispatcher.hooks;
+      const byType = dispatcher._getByType();
       let currentArgs = [...args];
       let cancelled   = false;
       const callId    = uid();
@@ -504,7 +505,8 @@ const PatchMgr = (() => {
       }
 
       // ─── BEFORE ──────────────────────────────────────────────────
-      for (const h of hooks.filter(h => h.type === 'before' && _breakerAllow(h.id))) {
+      for (const h of byType.before) {
+        if (!_breakerAllow(h.id)) continue;
         if (cancelled) break;
         let skip = false;
         const cancel = () => { skip = true; cancelled = true; };
@@ -515,20 +517,20 @@ const PatchMgr = (() => {
       }
 
       // ─── TAP（只读观察，不能取消/改参，无副作用承诺）──────────────
-      for (const h of hooks.filter(h => h.type === 'tap')) {
+      for (const h of byType.tap) {
         _tryCall(h.fn, ctx, [[...currentArgs]], `[${h.modId}] TAP ${String(key)}`);
       }
 
       // ─── REPLACE / AROUND / ORIGINAL ─────────────────────────────
       let result;
       if (!cancelled) {
-        const replacer = hooks.find(h => h.type === 'replace');
+        const replacer = byType.replace[0];
         if (replacer && _breakerAllow(replacer.id)) {
           const r = _tryCall(replacer.fn, ctx, currentArgs, `[${replacer.modId}] REPLACE ${String(key)}`);
           if (r.ok) { _breakerSuccess(replacer.id); result = r.val; }
           else { _breakerFail(replacer.id); }
         } else {
-          const arounds = hooks.filter(h => h.type === 'around' && _breakerAllow(h.id));
+          const arounds = byType.around;
           let execChain = original ? (...a) => original.apply(ctx, a) : () => {};
           for (let i = arounds.length - 1; i >= 0; i--) {
             const nxt    = execChain;
@@ -548,7 +550,8 @@ const PatchMgr = (() => {
       }
 
       // ─── AFTER ───────────────────────────────────────────────────
-      for (const h of hooks.filter(h => h.type === 'after' && _breakerAllow(h.id))) {
+      for (const h of byType.after) {
+        if (!_breakerAllow(h.id)) continue;
         const r = _tryCall(h.fn, ctx, [result, currentArgs], `[${h.modId}] AFTER ${String(key)}`);
         if (r.ok) { _breakerSuccess(h.id); if (r.val !== undefined) result = r.val; }
         else _breakerFail(h.id);
@@ -561,6 +564,20 @@ const PatchMgr = (() => {
     dispatcher.__nepDispatcher = true;
     dispatcher.original        = original;
     dispatcher.hooks           = [];
+    dispatcher.__typeCache     = null;
+    dispatcher.__typeCacheAt   = -1;
+    dispatcher.__hooksVer      = 0;
+    dispatcher._markDirty      = function() { this.__hooksVer++; };
+    dispatcher._getByType      = function() {
+      if (this.__typeCache && this.__typeCacheAt === this.__hooksVer) return this.__typeCache;
+      const out = { before: [], tap: [], replace: [], around: [], after: [] };
+      for (const h of this.hooks) {
+        if (out[h.type]) out[h.type].push(h);
+      }
+      this.__typeCache = out;
+      this.__typeCacheAt = this.__hooksVer;
+      return out;
+    };
     dispatcher.__replayCapture = false;
     dispatcher.__replayCap     = 50;
 
@@ -609,6 +626,7 @@ const PatchMgr = (() => {
       createdAt: now()
     });
     dispatcher.hooks.sort((a, b) => b.priority - a.priority);
+    dispatcher._markDirty();
 
     _getBreaker(hookId, opts.breaker || {});
 
@@ -966,6 +984,7 @@ const PatchMgr = (() => {
           const before = disp.hooks.length;
           disp.hooks = disp.hooks.filter(h => h.id !== hookId);
           if (disp.hooks.length < before) {
+            disp._markDirty?.();
             if (disp.hooks.length === 0 && disp.original) p.target[p.key] = disp.original;
             _patches[modId] = list.filter(r => r.id !== hookId);
             _audit('revertHook', { hookId, modId });
@@ -984,6 +1003,7 @@ const PatchMgr = (() => {
       const disp = p.target?.[p.key];
       if (disp && disp.__nepDispatcher) {
         disp.hooks = disp.hooks.filter(h => !(h.modId === modId && h.tag === tag));
+        disp._markDirty?.();
         if (disp.hooks.length === 0 && disp.original) p.target[p.key] = disp.original;
       }
     }
@@ -1018,6 +1038,7 @@ const PatchMgr = (() => {
         const disp = p.target[p.key];
         if (disp && disp.__nepDispatcher) {
           disp.hooks = disp.hooks.filter(h => h.id !== p.id);
+          disp._markDirty?.();
           if (disp.hooks.length === 0 && disp.original) p.target[p.key] = disp.original;
         }
       }
@@ -1367,6 +1388,7 @@ const Pipelines = (() => {
    ═══════════════════════════════════════════════════════════════════════ */
 const RenderPipeline = (() => {
   const _hooks = { pre: [], post: [] };
+  const _canGuardCtx = (ctx) => !!(ctx && typeof ctx.save === 'function' && typeof ctx.restore === 'function');
 
   function _addHook(phase, fn, modId, priority = 0) {
     if (!_hooks[phase]) { _warn(`RenderPipeline: unknown phase "${phase}".`); return; }
@@ -1382,11 +1404,27 @@ const RenderPipeline = (() => {
     _firePost() { this._fire('post'); },
     _fire(phase) {
       const gc = _g('ctx');
+      if (!gc) return;
       const W  = _g('W') || 0;
       const H  = _g('H') || 0;
+      const game = _g('Game');
+      const payload = { ctx: gc, g: gc, W, H, game, time: game?.time || 0 };
       for (const h of _hooks[phase]) {
-        try { h.fn({ ctx: gc, W, H, game: _g('Game'), time: _g('Game')?.time || 0 }); }
-        catch(e) { _pushLog('error', `RenderPipeline[${phase}] ${h.modId}: ${e.message}`); }
+        const guarded = _canGuardCtx(gc);
+        if (guarded) { try { gc.save(); } catch(_) {} }
+        try {
+          h.fn(payload);
+        } catch(e1) {
+          const msg = String(e1?.message || e1 || '');
+          if (/is not a function/.test(msg)) {
+            try { h.fn(gc, payload); }
+            catch(e2) { _pushLog('error', `RenderPipeline[${phase}] ${h.modId}: ${e2.message}`); }
+          } else {
+            _pushLog('error', `RenderPipeline[${phase}] ${h.modId}: ${msg}`);
+          }
+        } finally {
+          if (guarded) { try { gc.restore(); } catch(_) {} }
+        }
       }
     },
     removeByMod(modId) {
@@ -2573,6 +2611,10 @@ const ModLoader = {
   },
 
   load(id) {
+    if (!isStr(id) || !id) {
+      _warn(`load: invalid id "${id}"`);
+      return;
+    }
     const mod = _mods.get(id);
     if (!mod)         return _error(`load: "${id}" not registered`);
     if (mod.loaded)   return _warn(`"${id}" already loaded`);
@@ -2614,6 +2656,10 @@ const ModLoader = {
   },
 
   unload(id) {
+    if (!isStr(id) || !id) {
+      _warn(`unload: invalid id "${id}"`);
+      return;
+    }
     const mod = _mods.get(id);
     if (!mod || !mod.loaded) return;
     for (const [oid, om] of _mods) {
@@ -2640,9 +2686,18 @@ const ModLoader = {
     UIManager._updateModList();
   },
 
-  reload(id)  { this.unload(id); this.load(id); },
-  enable(id)  { const m = _mods.get(id); if (m) { m.enabled = true;  UIManager._updateModList(); } },
-  disable(id) { const m = _mods.get(id); if (m) { m.enabled = false; if(m.loaded) this.unload(id); UIManager._updateModList(); } },
+  reload(id)  {
+    if (!isStr(id) || !id) { _warn(`reload: invalid id "${id}"`); return; }
+    this.unload(id); this.load(id);
+  },
+  enable(id)  {
+    if (!isStr(id) || !id) { _warn(`enable: invalid id "${id}"`); return; }
+    const m = _mods.get(id); if (m) { m.enabled = true;  UIManager._updateModList(); }
+  },
+  disable(id) {
+    if (!isStr(id) || !id) { _warn(`disable: invalid id "${id}"`); return; }
+    const m = _mods.get(id); if (m) { m.enabled = false; if(m.loaded) this.unload(id); UIManager._updateModList(); }
+  },
 
   loadAll() {
     const order = _topoSort([..._mods.keys()]);
@@ -4412,11 +4467,29 @@ if (schema.style != null) {
       style: 'padding:8px 12px;background:rgba(0,0,0,0.5);cursor:move;font-weight:bold;font-size:12px;color:#52E6FF;border-bottom:1px solid rgba(82,230,255,0.3);display:flex;justify-content:space-between;align-items:center;',
       children: [
         { tag: 'span', text: schema.title || 'MOD PANEL' },
-        schema.closeBtn !== false ? {
-          tag: 'button', class: 'mini-btn danger', text: 'X',
-          style: 'padding:2px 6px;font-size:10px;',
-          onClick: (e) => { e.target.closest('.cyber-panel').style.display = 'none'; },
-        } : null,
+        { tag:'div', style:'display:flex;gap:4px;',
+          children: [
+            schema.minimizeBtn !== false ? {
+              tag: 'button', class: 'mini-btn', text: '—',
+              attrs: { title: 'Minimize panel' },
+              style: 'padding:2px 6px;font-size:10px;',
+              onClick: (e) => {
+                const panel = e.target.closest('.cyber-panel');
+                if (!panel) return;
+                const body = panel.querySelector('._nep_panel_body');
+                if (!body) return;
+                const collapsed = body.style.display === 'none';
+                body.style.display = collapsed ? '' : 'none';
+                e.target.textContent = collapsed ? '—' : '▢';
+              },
+            } : null,
+            schema.closeBtn !== false ? {
+              tag: 'button', class: 'mini-btn danger', text: 'X',
+              style: 'padding:2px 6px;font-size:10px;',
+              onClick: (e) => { e.target.closest('.cyber-panel').style.display = 'none'; },
+            } : null,
+          ]
+        },
       ],
     };
     const panelSchema = {
@@ -4432,7 +4505,7 @@ if (schema.style != null) {
   }
   return base;
 })(),
-      children: [header, { tag: 'div', style: 'padding:12px;', children: schema.children }],
+      children: [header, { tag: 'div', class: '_nep_panel_body', style: 'padding:12px;', children: schema.children }],
     };
     const panel = _build(panelSchema, modId);
     _makeDraggable(panel, panel.querySelector('._nep_drag_handle'));

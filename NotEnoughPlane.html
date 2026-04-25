@@ -12986,6 +12986,8 @@ function isFortressPrepPhase(){
 }
 
 function updatePlayerEmitters(dt){
+  // Unit Battle 期间玩家应完全停止主动发射，避免“背包 emitter 继续开火”
+  if (UnitBattle.active) return;
   if (isFortressPrepPhase()) return;
   if (!Player.emitters?.length) return;
   for(const em of Player.emitters){

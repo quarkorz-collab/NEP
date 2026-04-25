@@ -462,29 +462,21 @@ Nova.def('nova-optimizer', {
     'render-batch': {
       name: 'Render Batch Optimizer',
       version: '1.0',
-      description: '批量优化：减少 canvas state save/restore 调用次数',
+      description: '渲染统计器（安全模式）：仅采样帧节奏，不再 patch ctx.save',
 
       state: {
         saveCalls: 0,
         batchSavings: 0,
       },
 
-      // 在游戏主渲染前统计 save/restore 调用次数
-      patch: {
-        'ctx.save': {
-          tap(args) {
-            const rec = window.Nova?.get('nova-optimizer::render-batch');
-            if (rec) rec.state.saveCalls++;
-          }
-        }
-      },
-
       events: {
         // 每60帧重置计数
-        'forge:tick': function() {
+        'forge:tick': function(dt) {
           const rec = window.Nova?.get('nova-optimizer::render-batch');
           if (!rec) return;
           rec.state._tick = (rec.state._tick || 0) + 1;
+          // 采样近似值，避免 hook Canvas2D 核心方法导致兼容性问题
+          rec.state.saveCalls += (dt && dt > 0) ? Math.max(1, Math.round(16 / (dt * 1000))) : 1;
           if (rec.state._tick % 60 === 0) {
             rec.state.batchSavings = rec.state.saveCalls;
             rec.state.saveCalls = 0;

@@ -87,7 +87,8 @@ document.getElementById('inpDynZoom')?.addEventListener('change', (e)=>{
 /* ─── Guard ─────────────────────────────────────────────────────────────── */
 if (window.__NEPForge_installed__) {
   console.warn('[NEPForge] Already installed.');
-  window.NEPForge?.ui?.openTab();
+  // Do not force-switch users back to MODS tab when script is re-evaluated.
+  // This prevents unexpected tab jumps during external mod reload flows.
   return;
 }
 window.__NEPForge_installed__ = true;
@@ -232,6 +233,7 @@ if (_bootResult === 'not_found') {
 const _FORGE_LOG =[];
 const MAX_LOG = 400;
 const _spamCache = new Map();
+let _consoleCaptureInstalled = false;
 
 function _pushLog(lvl, msg) {
   const t = Date.now();
@@ -261,6 +263,52 @@ function _pushLog(lvl, msg) {
 const _info  = msg => _pushLog('info',  msg);
 const _warn  = msg => _pushLog('warn',  msg);
 const _error = msg => _pushLog('error', msg);
+
+function _stringifyConsoleArgs(args = []) {
+  return args.map((a) => {
+    if (typeof a === 'string') return a;
+    if (a instanceof Error) return a.stack || a.message || String(a);
+    try { return JSON.stringify(a); } catch(_) { return String(a); }
+  }).join(' ');
+}
+
+function _captureExternalLog(level, args) {
+  const msg = _stringifyConsoleArgs(args).trim();
+  if (!msg) return;
+  // Skip logs already emitted via _pushLog to avoid duplicate lines.
+  if (msg.includes('[NEPForge]')) return;
+  const lvl = level === 'error' ? 'error' : (level === 'warn' ? 'warn' : 'info');
+  const t = Date.now();
+  _FORGE_LOG.push({ t, lvl, msg });
+  if (_FORGE_LOG.length > MAX_LOG) _FORGE_LOG.shift();
+  if (typeof EventBus !== 'undefined') EventBus.emit('forge:log', { t, lvl, msg });
+}
+
+function _installConsoleCapture() {
+  if (_consoleCaptureInstalled) return;
+  _consoleCaptureInstalled = true;
+  const methods = ['log', 'info', 'warn', 'error', 'debug'];
+  for (const method of methods) {
+    const orig = console[method];
+    if (typeof orig !== 'function' || orig.__nepCaptured__) continue;
+    const wrapped = function(...args) {
+      _captureExternalLog(method, args);
+      return orig.apply(this, args);
+    };
+    wrapped.__nepCaptured__ = true;
+    try { console[method] = wrapped; } catch(_) {}
+  }
+
+  window.addEventListener('error', (ev) => {
+    const src = ev.filename ? `${ev.filename}:${ev.lineno || 0}:${ev.colno || 0}` : 'unknown';
+    const msg = ev.error?.stack || ev.message || 'Unknown runtime error';
+    _captureExternalLog('error', [`[window.onerror] ${src} ${msg}`]);
+  });
+  window.addEventListener('unhandledrejection', (ev) => {
+    const reason = ev.reason?.stack || ev.reason?.message || String(ev.reason);
+    _captureExternalLog('error', [`[unhandledrejection] ${reason}`]);
+  });
+}
 
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -319,6 +367,7 @@ const EventBus = (() => {
     listHandlers(evt) { return (handlers[evt] || []).map(h => ({ id: h.id, modId: h.modId, priority: h.priority })); },
   };
 })();
+_installConsoleCapture();
 
 /* ═══════════════════════════════════════════════════════════════════════
    5. CONFLICT GUARD
@@ -3400,8 +3449,8 @@ function _injectMenuTab() {
     if (_pageEl?.classList.contains('active') && _currentTab === 'mods') _renderTab('mods');
   }
 
-  function openTab(tab = 'mods') {
-    _currentTab = tab;
+  function openTab(tab = _currentTab || 'mods') {
+    _currentTab = tab || _currentTab || 'mods';
     // Navigate game menu to our page
     if (isFunc(window.setMenuPage)) window.setMenuPage('nepforge');
     // Activate tab button
@@ -4505,8 +4554,9 @@ if (schema.style != null) {
       tag: 'div', class: 'cyber-panel',
       style: (() => {
   const base = {
-    position: 'fixed', top: '20%', left: '20%', zIndex: 35000,
-    minWidth: '220px', display: 'flex', flexDirection: 'column',
+    position: 'fixed', top: '20%', left: '20%', zIndex: 65000,
+    minWidth: '220px', maxWidth: 'min(94vw, 420px)', maxHeight: 'min(82vh, 760px)',
+    display: 'flex', flexDirection: 'column', overflow: 'hidden', pointerEvents: 'auto',
   };
   // 只有当 schema.style 是普通对象时才合并
   if (isObj(schema.style) && schema.style.constructor === Object) {
@@ -4514,7 +4564,7 @@ if (schema.style != null) {
   }
   return base;
 })(),
-      children: [header, { tag: 'div', class: '_nep_panel_body', style: `padding:12px;${schema.startMinimized ? 'display:none;' : ''}`, children: schema.children }],
+      children: [header, { tag: 'div', class: '_nep_panel_body', style: `padding:12px;overflow:auto;overscroll-behavior:contain;${schema.startMinimized ? 'display:none;' : ''}`, children: schema.children }],
     };
     const panel = _build(panelSchema, modId);
     _makeDraggable(panel, panel.querySelector('._nep_drag_handle'));

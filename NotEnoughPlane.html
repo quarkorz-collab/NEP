@@ -1721,6 +1721,12 @@ input[type="checkbox"] {
             <summary>CORE <span class="muted">HP / FIRE / DMG / CRIT</span></summary>
             <div class="acc-body">
               <div class="field"><label>NAME</label><input id="ws_name"></div>
+              <div class="field"><label>START LV</label>
+                <div class="slider-row">
+                  <input id="ws_lv_r" type="range" min="1" max="120" step="1">
+                  <input id="ws_lv_n" type="number" min="1" max="120" step="1">
+                </div>
+              </div>
 
               <div class="field"><label>MAX HP</label>
                 <div class="slider-row">
@@ -18491,6 +18497,10 @@ Player.bomb = b.bomb;
 Player.gunMods.length = 0;
 for(const k of (b.gunMods||[])) Player.gunMods.push(k);
 setupPlayerEmittersFromBuild(b);
+  const baseLv = clamp((+b.startLv || 1)|0, 1, 120);
+  Player.lv = baseLv;
+  Player.xp = 0;
+  Player.xpNeed = xpNeedFor(baseLv);
 
 
   // 3. Mode-specific setup
@@ -18511,10 +18521,10 @@ setupPlayerEmittersFromBuild(b);
       Game.difficulty = 1 + Game.time*timeSlope + Game.score*BAL.diffScore;
 
       // light auto-scale (keep your original style)
-      const targetLv = startW + 2;
+      const targetLv = Math.max(baseLv, startW + 2);
       Player.lv = targetLv;
       Player.xpNeed = xpNeedFor(targetLv);
-      const lvDelta = targetLv - 1;
+      const lvDelta = Math.max(0, targetLv - baseLv);
       Player.maxHp += lvDelta * 1.5;
       Player.hp = Player.maxHp;
       Player.dmgMul += lvDelta * 0.015;
@@ -18552,11 +18562,11 @@ setupPlayerEmittersFromBuild(b);
 
     // fortress warp：同步给予玩家升级与补给，避免只有波数变化
     if (startW > 1){
-      const targetLv = Math.min(120, startW + 1);
+      const targetLv = Math.min(120, Math.max(baseLv, startW + 1));
       Player.lv = targetLv;
       Player.xpNeed = xpNeedFor(targetLv);
       Player.xp = 0;
-      const lvDelta = Math.max(0, targetLv - 1);
+      const lvDelta = Math.max(0, targetLv - baseLv);
       Player.maxHp += lvDelta * 1.25;
       Player.hp = Player.maxHp;
       Player.dmgMul += lvDelta * 0.012;
@@ -18666,13 +18676,13 @@ if (mode === 'lab'){
     
     // 3. 给予玩家初始资源/等级补偿 (可选，防止裸奔打第50波)
     if (Game.wave > 1) {
-      const targetLv = Game.wave + 2;
+      const targetLv = Math.max(baseLv, Game.wave + 2);
       Player.lv = targetLv;
       // 简单粗暴的属性补偿
-      Player.maxHp += (targetLv - 1) * 2;
+      Player.maxHp += Math.max(0, targetLv - baseLv) * 2;
       Player.hp = Player.maxHp;
-      Player.dmgMul += (targetLv - 1) * 0.04;
-      Player.fireRate += (targetLv - 1) * 0.015;
+      Player.dmgMul += Math.max(0, targetLv - baseLv) * 0.04;
+      Player.fireRate += Math.max(0, targetLv - baseLv) * 0.015;
       // 补发 Mod (不播放音效)
       const mods = Math.min(Player.gunModsMax, Math.ceil(targetLv / 3));
       for(let i=0; i<mods; i++) grantPlayerGunMod();
@@ -19077,7 +19087,7 @@ const LS_FORGE  = 'NAW_FORGE_V1';
 const deepClone = (o)=>JSON.parse(JSON.stringify(o));
 
 const DefaultBuild = (name)=>({
-  name, maxHp:100, fireRate:1.0, dmgMul:1.0, crit:0.05,
+  name, startLv:1, maxHp:100, fireRate:1.0, dmgMul:1.0, crit:0.05,
   pierceBase:0, drones:0, homingAmmo:0, bomb:1,
   gunMods:[],
   emitters:[],
@@ -19139,6 +19149,7 @@ function applyBodyOverrides(body, opt){
 }
 
 function clampBuild(b){
+  b.startLv = clamp((+b.startLv||1)|0, 1, 120);
   b.maxHp = clamp(+b.maxHp||100, 30, 600);
   b.fireRate = clamp(+b.fireRate||1, 0.5, 3.0);
   b.dmgMul = clamp(+b.dmgMul||1, 0.5, 5.0);
@@ -19383,6 +19394,7 @@ function bindWorkshopCoreFinal(){
   const wsName = rebind('ws_name');
 
   const core = [
+    {n:'ws_lv_n',     r:'ws_lv_r',     prop:'startLv',    fix:v=>clamp((+v||1)|0,1,120)},
     {n:'ws_hp_n',     r:'ws_hp_r',     prop:'maxHp',      fix:v=>clamp(+v||100, 30, 600)},
     {n:'ws_fire_n',   r:'ws_fire_r',   prop:'fireRate',   fix:v=>clamp(+v||1,   0.5, 3.0)},
     {n:'ws_dmg_n',    r:'ws_dmg_r',    prop:'dmgMul',     fix:v=>clamp(+v||1,   0.5, 5.0)},
@@ -19628,6 +19640,7 @@ function syncWorkshopFromModel(){
     if (n) n.value = v;
     if (r) r.value = v;
   };
+  setPair('ws_lv_n','ws_lv_r', b.startLv || 1);
   setPair('ws_hp_n','ws_hp_r', b.maxHp);
   setPair('ws_fire_n','ws_fire_r', b.fireRate);
   setPair('ws_dmg_n','ws_dmg_r', b.dmgMul);

@@ -981,3 +981,129 @@ NEPForge.install({
     api.log('Signal Weaver: capabilities + signals + keyboard (P/K) + scheduler installed.');
   }
 });
+
+
+// ─────────────────────────────────────────────────────────────────
+// #5  LAB MULTI SPAWNER · LAB 模式同时放多只 Forge 怪
+// ─────────────────────────────────────────────────────────────────
+NEPForge.install({
+  id: 'lab-multi-spawner',
+  name: 'LAB Multi Spawner',
+  version: '1.0',
+  description: 'LAB 敌袭阶段保持多只 Forge 怪同场（可动态调整数量上限）。',
+  init(api) {
+    let enabled = true;
+    let cap = 4;
+
+    api.ui.floating({
+      title: 'LAB MULTI',
+      style: { top: '18%', left: 'calc(100% - 260px)', width: '220px' },
+      children: [
+        { tag: 'div', style: 'font-size:11px;color:#9deeff;margin-bottom:6px;', text: 'LAB 同场怪物上限' },
+        api.ui.components.slider({ label: 'MONSTER CAP', min: 1, max: 12, step: 1, value: cap, onChange(v){ cap = Math.max(1, v|0); }}),
+        api.ui.components.toggle({ label: 'ENABLED', checked: true, onChange(v){ enabled = !!v; } }),
+      ],
+    });
+
+    api.events.on('forge:tick', () => {
+      if (!enabled) return;
+      if (api.game.mode !== 'lab' || api.game.state !== 'playing') return;
+      const Fortress = api.resolver.get('Fortress');
+      if (!Fortress || Fortress.phase !== 'assault' || !Fortress.labForgeSpec) return;
+
+      const aliveLab = (window.enemies || []).filter(e => e?.alive && e.type === 'ENEMY').length;
+      if (aliveLab >= cap) return;
+
+      const need = cap - aliveLab;
+      for (let i = 0; i < need; i++) {
+        const e = window.spawnForgeEnemy?.(Fortress.labForgeSpec);
+        if (!e) continue;
+        e.x = (window.W || 400) * (0.25 + Math.random() * 0.5);
+        e.y = -20 - i * 28;
+      }
+    });
+
+    api.log('LAB Multi Spawner installed');
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────
+// #6  PLAYER FIRE CONTROL · 运行时控制 Emitter/Affix/停火
+// ─────────────────────────────────────────────────────────────────
+NEPForge.install({
+  id: 'player-fire-control',
+  name: 'Player Fire Control',
+  version: '1.0',
+  description: '游戏内动态开关玩家发射器、词条以及停火开关。',
+  init(api) {
+    const state = { ceasefire: false, disabledEmitterIdx: new Set(), disabledAffix: new Set() };
+
+    api.patch.around('firePlayer', (orig, dt) => {
+      if (!state.ceasefire) return orig(dt);
+    }, 20, { tag: 'ceasefire' });
+
+    api.patch.around('updatePlayerEmitters', (orig, dt) => {
+      const p = window.Player;
+      if (!p?.emitters?.length) return orig(dt);
+      const backup = p.emitters;
+      p.emitters = backup.filter((_, idx) => !state.disabledEmitterIdx.has(idx));
+      try { return orig(dt); }
+      finally { p.emitters = backup; }
+    }, 20, { tag: 'emitter-filter' });
+
+    api.patch.before('spawnBullet', ([team, x, y, vx, vy, opts], cancel) => {
+      if (team !== 'P' || !opts?.mods?.length) return;
+      const mods = opts.mods.filter(m => !state.disabledAffix.has(m));
+      return [team, x, y, vx, vy, { ...opts, mods }];
+    }, 10, { tag: 'affix-filter' });
+
+    api.ui.floating({
+      title: 'FIRE CTRL',
+      style: { top: '48%', left: 'calc(100% - 260px)', width: '220px' },
+      children: [
+        api.ui.components.toggle({ label: 'CEASEFIRE', checked: false, onChange(v){ state.ceasefire = !!v; } }),
+        api.ui.components.button({ label: 'TOGGLE Emitter #1', onClick(){ const i=0; state.disabledEmitterIdx.has(i) ? state.disabledEmitterIdx.delete(i) : state.disabledEmitterIdx.add(i); } }),
+        api.ui.components.button({ label: 'TOGGLE Emitter #2', onClick(){ const i=1; state.disabledEmitterIdx.has(i) ? state.disabledEmitterIdx.delete(i) : state.disabledEmitterIdx.add(i); } }),
+        api.ui.components.button({ label: 'TOGGLE HEAVY Affix', onClick(){ const k='HEAVY'; state.disabledAffix.has(k) ? state.disabledAffix.delete(k) : state.disabledAffix.add(k); } }),
+      ],
+    });
+
+    api.log('Player Fire Control installed');
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────
+// #7  NO WARP BONUS · 禁用跳关时强制赋予玩家加成
+// ─────────────────────────────────────────────────────────────────
+NEPForge.install({
+  id: 'no-warp-bonus',
+  name: 'No Warp Bonus',
+  version: '1.0',
+  description: '跳关/高波开局时保留原始 Build 属性，不自动补发属性和词条。',
+  init(api) {
+    api.patch.around('startRun', (orig, cfg = {}) => {
+      const b = JSON.parse(JSON.stringify(api.player.buildA || window.Builds?.A || {}));
+      const startWave = Math.max(1, Number(cfg?.wave || 1));
+      const out = orig(cfg);
+      if (startWave <= 1) return out;
+
+      const p = window.Player;
+      if (!p) return out;
+      p.maxHp = b.maxHp ?? p.maxHp;
+      p.hp = p.maxHp;
+      p.fireRate = b.fireRate ?? p.fireRate;
+      p.dmgMul = b.dmgMul ?? p.dmgMul;
+      p.crit = b.crit ?? p.crit;
+      p.pierceBase = b.pierceBase ?? p.pierceBase;
+      p.drones = b.drones ?? p.drones;
+      p.homingAmmo = b.homingAmmo ?? p.homingAmmo;
+      p.bomb = b.bomb ?? p.bomb;
+      p.gunMods.length = 0;
+      for (const k of (b.gunMods || [])) p.gunMods.push(k);
+      api.log('No Warp Bonus reapplied base build');
+      return out;
+    }, 99, { tag: 'no-warp-bonus' });
+  }
+});

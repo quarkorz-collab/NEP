@@ -31,6 +31,7 @@
   _safeGet('drawEnemyGenericBody',drawEnemyGenericBody);
 _safeGet('WrapperFieldDefs',    WrapperFieldDefs);
 _safeGet('PlayerEmitterCatalog', PlayerEmitterCatalog);
+_safeGet('setupPlayerEmittersFromBuild', setupPlayerEmittersFromBuild);
   // W and H are synced on every resize (see resize() above); do initial sync
   window.W = W; window.H = H;
   // step is a function declaration so it IS on window already, but ensure it's current
@@ -3987,9 +3988,14 @@ if (schema.style != null) {
      */
     progress({ value = 0, max = 100, color = '#52E6FF', height = 6, label, style = '' } = {}) {
       const pct = () => clamp((value / max) * 100, 0, 100).toFixed(1);
+      const valueEl = _build({
+        tag: 'span',
+        style: `font-family:monospace;font-size:10px;color:${color};min-width:52px;text-align:right;display:inline-block;flex:0 0 auto;`,
+        text: `${pct()}%`,
+      }, null);
       const bar = _build({
         tag: 'div',
-        style: `height:${height}px;background:rgba(82,230,255,0.12);border-radius:${height}px;overflow:hidden;`,
+        style: `height:${height}px;background:rgba(82,230,255,0.12);border-radius:${height}px;overflow:hidden;flex:1 1 auto;min-width:0;`,
         children: [{
           tag: 'div',
           style: `height:100%;width:${pct()}%;background:${color};border-radius:${height}px;transition:width 0.2s;`,
@@ -4000,12 +4006,14 @@ if (schema.style != null) {
         tag: 'div', style: style,
         children: [
           label ? { tag: 'div', style: 'font-size:10px;color:#aaa;margin-bottom:3px;', text: label } : null,
-          bar,
+          { tag: 'div', style: 'display:flex;align-items:center;gap:6px;min-width:0;', children:[bar, valueEl] },
         ].filter(Boolean),
       }, null);
       wrapper.setValue = (v) => {
         value = v;
-        inner.style.width = pct() + '%';
+        const cur = pct();
+        inner.style.width = cur + '%';
+        valueEl.textContent = `${cur}%`;
       };
       return wrapper;
     },
@@ -4020,12 +4028,12 @@ if (schema.style != null) {
       let _val = value;
       const numEl = document.createElement('span');
       numEl.textContent = _val;
-      numEl.style.cssText = `font-family:monospace;font-size:11px;color:${color};min-width:36px;display:inline-block;text-align:right;`;
+      numEl.style.cssText = `font-family:monospace;font-size:11px;color:${color};min-width:52px;display:inline-block;text-align:right;flex:0 0 auto;`;
 
       const inp = document.createElement('input');
       inp.type  = 'range';
       inp.min   = min; inp.max = max; inp.step = step; inp.value = _val;
-      inp.style.cssText = `flex:1;accent-color:${color};margin:0 6px;`;
+      inp.style.cssText = `flex:1 1 auto;min-width:0;accent-color:${color};margin:0 6px;`;
       inp.addEventListener('input', () => {
         _val = Number(inp.value);
         numEl.textContent = _val;
@@ -4033,11 +4041,11 @@ if (schema.style != null) {
       });
 
       const row = document.createElement('div');
-      row.style.cssText = `display:flex;align-items:center;gap:4px;${style}`;
+      row.style.cssText = `display:flex;align-items:center;gap:4px;min-width:0;${style}`;
       if (label) {
         const lbl = document.createElement('span');
         lbl.textContent = label;
-        lbl.style.cssText = 'font-size:10px;color:#aaa;white-space:nowrap;';
+        lbl.style.cssText = 'font-size:10px;color:#aaa;white-space:nowrap;max-width:45%;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto;';
         row.appendChild(lbl);
       }
       row.appendChild(inp);

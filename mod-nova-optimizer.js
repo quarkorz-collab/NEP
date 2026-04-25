@@ -1,5 +1,5 @@
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  NOVA OPTIMIZER  v1.2                                                    ║
+// ║  NOVA OPTIMIZER  v2.0                                                    ║
 // ║  基于 NovaForge 的高级性能优化套件                                        ║
 // ║  依赖：先加载 nova_forge_metaloader.js                                   ║
 // ║                                                                          ║
@@ -12,8 +12,8 @@
 // ╚══════════════════════════════════════════════════════════════════════════╝
 Nova.def('nova-optimizer', {
   name: '⚡ Nova Optimizer',
-  version: '1.2',
-  description: '全自动性能优化套件：子弹剔除 / 敌人 LOD / 帧预算 / 自适应特效 / 内存看门狗。',
+  version: '2.0',
+  description: '全自动性能优化套件（增强版）：子弹剔除 / 敌人 LOD / 帧预算 / 自适应特效 / 内存看门狗。',
 
   // ─────────────────────────────────────────────────────────────────
   // 响应式状态
@@ -23,6 +23,7 @@ Nova.def('nova-optimizer', {
     bulletCulling:    true,
     enemyLOD:         true,
     adaptiveFX:       true,
+    dynamicThrottle:  true,
     fpsTarget:        55,
     cullMargin:       60,    // px 越界后才剔除
     lodThreshold:     80,    // % FPS 目标达到此比例时启用 LOD
@@ -35,6 +36,8 @@ Nova.def('nova-optimizer', {
     culledBullets:    0,
     lodActive:        0,
     memPressure:      'ok',
+    throttledEnemies: 0,
+    skippedShots:     0,
 
     // 内部（不渲染）
     _fpsHistory:      [],
@@ -53,6 +56,7 @@ Nova.def('nova-optimizer', {
       { type: 'toggle',  state: 'bulletCulling', label: 'BULLET CULLING' },
       { type: 'toggle',  state: 'enemyLOD',      label: 'ENEMY LOD' },
       { type: 'toggle',  state: 'adaptiveFX',    label: 'ADAPTIVE FX' },
+      { type: 'toggle',  state: 'dynamicThrottle', label: 'DYNAMIC THROTTLE' },
       { type: 'slider',  state: 'fpsTarget',     label: 'FPS TARGET', min: 20, max: 120, step: 5 },
       { type: 'slider',  state: 'cullMargin',    label: 'CULL MARGIN', min: 0, max: 200, step: 10 },
       { type: 'separator' },
@@ -63,10 +67,12 @@ Nova.def('nova-optimizer', {
       { type: 'display', label: 'PRESSURE',  bind: 'pressure',      color: '#FF2F57' },
       { type: 'display', label: 'CULLED/F',  bind: 'culledBullets', color: '#B36CFF' },
       { type: 'display', label: 'LOD SAVES', bind: 'lodActive',     color: '#B36CFF' },
+      { type: 'display', label: 'THROTTLED', bind: 'throttledEnemies', color: '#FFB020' },
+      { type: 'display', label: 'SKIP/F',    bind: 'skippedShots',   color: '#FF2F57' },
       { type: 'separator' },
       { type: 'button',  label: 'RESET STATS', color: '#555',
         action(state) {
-          state.update({ culledBullets: 0, lodActive: 0, _fpsHistory: [] });
+          state.update({ culledBullets: 0, lodActive: 0, throttledEnemies: 0, skippedShots: 0, _fpsHistory: [] });
         }
       },
     ]
@@ -121,7 +127,8 @@ Nova.def('nova-optimizer', {
     if (s.bulletCulling) {
       const W = ctx.game.W || 400;
       const H = ctx.game.H || 600;
-      const m = s.cullMargin + (s.pressure === 'critical' ? 0 : s.pressure === 'high' ? -20 : 0);
+      const pressureMargin = s.pressure === 'critical' ? -40 : s.pressure === 'high' ? -20 : 0;
+      const m = Math.max(0, s.cullMargin + pressureMargin);
       let culled = 0;
 
       const arrs = [
@@ -145,6 +152,8 @@ Nova.def('nova-optimizer', {
       const H = ctx.game.H || 600;
       const m = 120;
       let saved = 0;
+      let throttled = 0;
+      let skipped = 0;
 
       const enemies = ctx.game.enemies || [];
       for (const e of enemies) {
@@ -154,16 +163,35 @@ Nova.def('nova-optimizer', {
 
         // LOD：降低屏外敌人的发射器冷却速率
         if (e.emitters) {
-          const penalty = s.pressure === 'critical' ? 2.0 : 1.4;
+          const penalty = s.pressure === 'critical' ? 2.4 : s.pressure === 'high' ? 1.8 : 1.35;
           for (const em of e.emitters) {
-            if (em && typeof em.cd === 'number' && em.cd < 0.4) {
-              em.cd += 0.3 * penalty * dt;
+            if (em && typeof em.cd === 'number') {
+              const addCd = (em.cd < 0.6 ? 0.45 : 0.25) * penalty * dt;
+              em.cd += addCd;
               saved++;
             }
+          }
+          throttled++;
+        }
+
+        // 动态节流：压力高时降低屏内敌人开火密度（通过跳过 emitters）
+        if (s.dynamicThrottle && s.pressure !== 'medium' && Array.isArray(e.emitters) && e.emitters.length) {
+          e._novaSkipToggle = (e._novaSkipToggle || 0) + 1;
+          const skipModulo = s.pressure === 'critical' ? 2 : 3;
+          if ((e._novaSkipToggle % skipModulo) !== 0) {
+            for (const em of e.emitters) {
+              if (em && typeof em.cd === 'number' && em.cd <= 0.06) {
+                em.cd = 0.18;
+                skipped++;
+              }
+            }
+            throttled++;
           }
         }
       }
       s.lodActive = saved;
+      s.throttledEnemies = throttled;
+      s.skippedShots = skipped;
     }
 
     // ── Memory Watchdog（每 ~60 秒清理死亡实体） ──────────────────
@@ -224,7 +252,7 @@ Nova.def('nova-optimizer', {
   // 安装/卸载
   // ─────────────────────────────────────────────────────────────────
   setup(ctx) {
-    ctx.log('⚡ Nova Optimizer v1.2 installed.');
+    ctx.log('⚡ Nova Optimizer v2.0 installed.');
     ctx.toast('⚡ OPTIMIZER ACTIVE', '#50DC64', 2000);
   },
 

@@ -5477,6 +5477,7 @@ playerFireControl: `NEPForge.install({
       disabledAffix: new Set(),
       uiRefreshCd: 0,
       panel: null,
+      uiSig: '',
     };
     const isEmitterEnabled = (idx) => !state.disabledEmitterIdx.has(idx);
     const isAffixEnabled = (k) => !state.disabledAffix.has(k);
@@ -5500,14 +5501,40 @@ playerFireControl: `NEPForge.install({
       return [team, x, y, vx, vy, { ...opts, mods }];
     }, 10, { tag: 'affix-filter' });
 
-    const renderPanel = () => {
-      if (state.panel?.remove) state.panel.remove();
+    const renderPanel = (force = false) => {
       const p = window.Player || {};
       const emitters = Array.isArray(p.emitters) ? p.emitters : [];
       const affixes = Array.isArray(p.gunMods) ? p.gunMods : [];
+      const nextSig = JSON.stringify({
+        emitters: emitters.map(em => em?.type || em?.id || 'EMITTER'),
+        affixes,
+        offE: Array.from(state.disabledEmitterIdx).sort((a,b)=>a-b),
+        offA: Array.from(state.disabledAffix).sort(),
+        ceasefire: !!state.ceasefire,
+      });
+      if (!force && state.panel && state.uiSig === nextSig) return;
+      state.uiSig = nextSig;
+
+      const panelStyle = state.panel ? {
+        top: state.panel.style.top || '48%',
+        left: state.panel.style.left || 'calc(100% - 280px)',
+        right: state.panel.style.right || 'auto',
+        bottom: state.panel.style.bottom || 'auto',
+        display: state.panel.style.display || '',
+        minimized: state.panel.dataset?.minimized === '1',
+      } : null;
+      if (state.panel?.remove) state.panel.remove();
+
       state.panel = api.ui.floating({
         title: 'FIRE CTRL',
-        style: { top: '48%', left: 'calc(100% - 280px)', width: '245px' },
+        style: {
+          top: panelStyle?.top || '48%',
+          left: panelStyle?.left || 'calc(100% - 280px)',
+          right: panelStyle?.right || 'auto',
+          bottom: panelStyle?.bottom || 'auto',
+          width: '245px'
+        },
+        startMinimized: !!panelStyle?.minimized,
         children: [
           api.ui.components.toggle({ label: 'CEASEFIRE', checked: state.ceasefire, onChange(v){ state.ceasefire = !!v; } }),
           api.ui.components.button({ label: '⏹ STOP FIRE', color: '#FF2F57', onClick(){ state.ceasefire = true; } }),
@@ -5518,7 +5545,7 @@ playerFireControl: `NEPForge.install({
             color: isEmitterEnabled(idx) ? '#50DC64' : '#FFB020',
             onClick() {
               isEmitterEnabled(idx) ? state.disabledEmitterIdx.add(idx) : state.disabledEmitterIdx.delete(idx);
-              renderPanel();
+              renderPanel(true);
             }
           })),
           { tag: 'div', style: 'font-size:10px;color:#9deeff;margin-top:5px;', text: 'Affixes（点击开/关）' },
@@ -5527,13 +5554,14 @@ playerFireControl: `NEPForge.install({
             color: isAffixEnabled(k) ? '#52E6FF' : '#FFB020',
             onClick() {
               isAffixEnabled(k) ? state.disabledAffix.add(k) : state.disabledAffix.delete(k);
-              renderPanel();
+              renderPanel(true);
             }
           })),
         ],
       });
+      if (panelStyle?.display === 'none') state.panel.style.display = 'none';
     };
-    renderPanel();
+    renderPanel(true);
     api.events.on('forge:tick', (_, dt = 0.016) => {
       state.uiRefreshCd -= dt;
       if (state.uiRefreshCd > 0) return;

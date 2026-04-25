@@ -1755,6 +1755,11 @@ input[type="checkbox"] {
 <details class="acc">
   <summary>ADVANCED EMITTER GRAPH <span class="muted">UNLIMITED · NESTED WRAPPER</span></summary>
   <div class="acc-body">
+    <div class="menu-actions" style="margin-bottom:8px;justify-content:flex-start;gap:8px;flex-wrap:wrap">
+      <button id="btnWsEmitGraphMode" class="mini-btn" style="border-color:#52E6FF;color:#52E6FF">VIEW: UI</button>
+      <button id="btnWsEmitGraphAdd" class="mini-btn">ADD EMITTER</button>
+    </div>
+    <div id="ws_emitGraphEditor" style="display:block;margin-bottom:8px"></div>
     <div class="field">
       <label>EMITTER GRAPH JSON (ARRAY)</label>
       <textarea id="ws_emitGraphJson" style="min-height:120px;font-family:monospace" placeholder='[{"isWrapper":false,"type":"AIM","mods":["HOMING"],"speed":220,"cd":1.2}]'></textarea>
@@ -19280,6 +19285,8 @@ function bindWorkshopCoreFinal(){
   const btnCopyBtoA = rebind('btnCopyBtoA');
   const btnApplyEmitGraph = rebind('btnApplyEmitGraph');
   const btnUseSimpleEmitters = rebind('btnUseSimpleEmitters');
+  const btnWsEmitGraphMode = rebind('btnWsEmitGraphMode');
+  const btnWsEmitGraphAdd = rebind('btnWsEmitGraphAdd');
   const wsEmitGraphJson = rebind('ws_emitGraphJson');
 
   // inputs (core)
@@ -19331,6 +19338,7 @@ document.querySelectorAll('#ws_emitChips .pick-chip').forEach(btn=>{
     if (wsEmitGraphJson) {
       wsEmitGraphJson.value = JSON.stringify(Array.isArray(b.emitterSpecs) ? b.emitterSpecs : [], null, 2);
     }
+    renderWorkshopEmitterGraphUI();
 
     refreshForgePreview?.();
   }
@@ -19440,6 +19448,23 @@ document.querySelectorAll('#ws_emitChips .pick-chip').forEach(btn=>{
     textPop?.(W*0.5, 90, 'SWITCHED TO SIMPLE EMITTER CHIPS', '#FFB020');
   });
 
+  btnWsEmitGraphMode && (btnWsEmitGraphMode.onclick = ()=>{
+    ensureWorkshopEmitterGraphState();
+    MenuUI.wsEmitGraphViewMode = (MenuUI.wsEmitGraphViewMode === 'json') ? 'ui' : 'json';
+    renderWorkshopEmitterGraphUI();
+  });
+
+  btnWsEmitGraphAdd && (btnWsEmitGraphAdd.onclick = ()=>{
+    const b = currentBuild();
+    if (!Array.isArray(b.emitterSpecs)) b.emitterSpecs = [];
+    b.emitterSpecs.push({ isWrapper:false, type:'AIM', mods:[...(b.gunMods||[])], speed:220, cd:1.2 });
+    b.emitters = [];
+    clampBuild(b);
+    saveBuilds?.();
+    syncWorkshopFromModel?.();
+    textPop?.(W*0.5, 90, `EMITTER ADDED (${b.emitterSpecs.length})`, '#52E6FF');
+  });
+
   // 初次回填
   if (!MenuUI.editKey) MenuUI.editKey = 'A';
   pushUI();
@@ -19536,6 +19561,7 @@ document.querySelectorAll('#ws_emitChips .pick-chip').forEach(btn=>{
 
   const graphEl = document.getElementById('ws_emitGraphJson');
   if (graphEl) graphEl.value = JSON.stringify(Array.isArray(b.emitterSpecs) ? b.emitterSpecs : [], null, 2);
+  renderWorkshopEmitterGraphUI();
 
   // active state
   document.getElementById('btnEditA')?.classList.toggle('active', MenuUI.editKey==='A');
@@ -19543,6 +19569,223 @@ document.querySelectorAll('#ws_emitChips .pick-chip').forEach(btn=>{
   
 
   refreshForgePreview?.();
+}
+
+function ensureWorkshopEmitterGraphState(){
+  if (!MenuUI.wsEmitGraphViewMode) MenuUI.wsEmitGraphViewMode = 'ui';
+}
+
+function renderWorkshopEmitterEditor(card, item, idx, onChanged){
+  const model = emitterToUiModel(item);
+  const persist = ()=>{
+    const b = currentBuild();
+    if (!Array.isArray(b.emitterSpecs)) b.emitterSpecs = [];
+    b.emitterSpecs[idx] = uiModelToEmitter(model);
+    onChanged?.();
+  };
+
+  const baseWrap = document.createElement('div');
+  baseWrap.style.cssText = 'border:1px dashed rgba(255,255,255,0.2);padding:6px;margin-bottom:6px';
+  baseWrap.innerHTML = '<div class="muted" style="margin-bottom:4px">BASE EMITTER</div>';
+
+  const typeRow = document.createElement('div');
+  typeRow.className = 'field';
+  const typeLb = document.createElement('label');
+  typeLb.textContent = 'TYPE';
+  const typeSel = document.createElement('select');
+  typeSel.className = 'forge-extra-select';
+  Object.keys(EmitterCatalog).forEach(k=>{
+    const op=document.createElement('option'); op.value=k; op.textContent=k; typeSel.appendChild(op);
+  });
+  typeSel.value = model.base.type;
+  typeSel.addEventListener('change', ()=>{ model.base.type = typeSel.value; persist(); });
+  typeRow.appendChild(typeLb); typeRow.appendChild(typeSel);
+
+  const cdSp = document.createElement('div');
+  cdSp.className = 'slider-row';
+  const mkNum=(label,v,step,cb)=>{
+    const f=document.createElement('div');f.className='field';
+    const l=document.createElement('label');l.textContent=label;
+    const i=document.createElement('input');i.type='number';i.step=step;i.value=String(v);
+    i.addEventListener('change',()=>{ cb(+i.value||0); persist(); });
+    f.appendChild(l);f.appendChild(i);return f;
+  };
+  cdSp.appendChild(mkNum('CD', model.base.cd, '0.01', v=>model.base.cd=v));
+  cdSp.appendChild(mkNum('SPEED', model.base.speed, '1', v=>model.base.speed=v));
+
+  const modsRow = document.createElement('div');
+  modsRow.className = 'field';
+  const modsLb = document.createElement('label'); modsLb.textContent = 'BASE MODS';
+  const modsChips = document.createElement('div');
+  modsChips.className = 'chip-pick';
+  modsChips.style.maxHeight = '120px';
+  modsChips.style.overflowY = 'auto';
+  const selected = new Set(model.base.mods || []);
+  Object.keys(BulletAffixCatalog).forEach(k=>{
+    const btn = document.createElement('button');
+    btn.type='button';
+    btn.className='pick-chip';
+    btn.textContent=k;
+    btn.dataset.key=k;
+    btn.classList.toggle('on', selected.has(k));
+    btn.addEventListener('click', ()=>{
+      if (selected.has(k)) selected.delete(k);
+      else selected.add(k);
+      model.base.mods = Array.from(selected).slice(0,24);
+      btn.classList.toggle('on', selected.has(k));
+      persist();
+    });
+    modsChips.appendChild(btn);
+  });
+  modsRow.appendChild(modsLb);
+  modsRow.appendChild(modsChips);
+
+  baseWrap.appendChild(typeRow);
+  baseWrap.appendChild(cdSp);
+  baseWrap.appendChild(modsRow);
+  card.appendChild(baseWrap);
+
+  const wrappersWrap = document.createElement('div');
+  wrappersWrap.className = 'forge-extra-wrap';
+  wrappersWrap.innerHTML = '<div class="muted" style="margin-bottom:4px">WRAPPERS (INNER -> OUTER)</div>';
+  const list = document.createElement('div');
+  list.style.display='flex'; list.style.flexDirection='column'; list.style.gap='6px'; list.style.minWidth='0';
+
+  const rerender = ()=>{
+    list.innerHTML='';
+    model.wrappers.forEach((w, wi)=>{
+      const row = document.createElement('div');
+      row.className='forge-extra-wrap-row';
+
+      const top = document.createElement('div');
+      top.className='forge-extra-wrap-top';
+      const sel = document.createElement('select');
+      sel.className = 'forge-extra-select';
+      sel.style.minWidth = '0';
+      sel.style.flex = '1 1 220px';
+      const empty = document.createElement('option'); empty.value=''; empty.textContent='(NONE)'; sel.appendChild(empty);
+      Object.keys(CompositeWrappers).forEach(k=>{ const op=document.createElement('option'); op.value=k; op.textContent=k; sel.appendChild(op); });
+      sel.value = w.wrapperType || '';
+      sel.addEventListener('change', ()=>{ w.wrapperType = sel.value; if(!w.compCfg) w.compCfg={}; persist(); rerender(); });
+
+      const mkBtn=(txt,fn)=>{ const b=document.createElement('button'); b.className='mini-btn'; b.textContent=txt; b.addEventListener('click',fn); return b; };
+      const up = mkBtn('↑', ()=>{ if (wi<=0) return; [model.wrappers[wi-1],model.wrappers[wi]]=[model.wrappers[wi],model.wrappers[wi-1]]; persist(); rerender(); });
+      const dn = mkBtn('↓', ()=>{ if (wi>=model.wrappers.length-1) return; [model.wrappers[wi+1],model.wrappers[wi]]=[model.wrappers[wi],model.wrappers[wi+1]]; persist(); rerender(); });
+      const del = mkBtn('REMOVE', ()=>{ model.wrappers.splice(wi,1); persist(); rerender(); });
+      const act = document.createElement('div'); act.className='forge-extra-wrap-actions';
+      act.appendChild(up); act.appendChild(dn); act.appendChild(del);
+      top.appendChild(sel); top.appendChild(act);
+
+      const cfgBox = document.createElement('div');
+      cfgBox.style.marginTop='6px';
+      renderWrapperCfgFieldsUI(cfgBox, w, wi, persist);
+
+      row.appendChild(top);
+      row.appendChild(cfgBox);
+      list.appendChild(row);
+    });
+  };
+  rerender();
+  const addW = document.createElement('button');
+  addW.className='mini-btn'; addW.textContent='ADD WRAPPER';
+  addW.addEventListener('click', ()=>{
+    model.wrappers.push({wrapperType:'', compCfg:{}});
+    persist();
+    rerender();
+  });
+
+  wrappersWrap.appendChild(list);
+  wrappersWrap.appendChild(addW);
+  card.appendChild(wrappersWrap);
+}
+
+function renderWorkshopEmitterGraphUI(){
+  ensureWorkshopEmitterGraphState();
+  const root = document.getElementById('ws_emitGraphEditor');
+  const modeBtn = document.getElementById('btnWsEmitGraphMode');
+  if (!root) return;
+  if (modeBtn) modeBtn.textContent = `VIEW: ${MenuUI.wsEmitGraphViewMode === 'json' ? 'JSON' : 'UI'}`;
+  root.innerHTML = '';
+
+  const b = currentBuild();
+  const list = Array.isArray(b.emitterSpecs) ? b.emitterSpecs : [];
+  if (!list.length){
+    const empty = document.createElement('div');
+    empty.className = 'muted';
+    empty.textContent = '暂无高级 emitter。点击 ADD EMITTER 开始可视化编辑。';
+    root.appendChild(empty);
+    return;
+  }
+
+  list.forEach((item, idx)=>{
+    const card = document.createElement('div');
+    card.className = 'forge-extra-card';
+    card.style.cssText = 'border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.22);padding:8px;margin-bottom:8px';
+
+    const title = document.createElement('div');
+    title.className = 'forge-extra-title';
+    title.innerHTML = `<div class="mono forge-extra-title-text" style="font-size:12px">EMITTER #${idx+1} · ${summarizeSerializedEmitter(item)}</div>`;
+
+    const btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;gap:6px';
+    const mkBtn=(txt,fn)=>{ const bt=document.createElement('button'); bt.className='mini-btn'; bt.textContent=txt; bt.addEventListener('click',fn); return bt; };
+    btns.appendChild(mkBtn('↑', ()=>{
+      if (idx <= 0) return;
+      [list[idx-1], list[idx]] = [list[idx], list[idx-1]];
+      b.emitterSpecs = list;
+      saveBuilds?.();
+      syncWorkshopFromModel();
+    }));
+    btns.appendChild(mkBtn('↓', ()=>{
+      if (idx >= list.length - 1) return;
+      [list[idx+1], list[idx]] = [list[idx], list[idx+1]];
+      b.emitterSpecs = list;
+      saveBuilds?.();
+      syncWorkshopFromModel();
+    }));
+    btns.appendChild(mkBtn('REMOVE', ()=>{
+      list.splice(idx,1);
+      b.emitterSpecs = list;
+      saveBuilds?.();
+      syncWorkshopFromModel();
+    }));
+    title.appendChild(btns);
+    card.appendChild(title);
+
+    if (MenuUI.wsEmitGraphViewMode === 'json'){
+      const ta = document.createElement('textarea');
+      ta.style.cssText = 'width:100%;min-height:120px;background:rgba(0,0,0,0.4);color:#9deeff;border:1px solid rgba(157,238,255,0.35);font-family:monospace;font-size:11px';
+      ta.value = JSON.stringify(item, null, 2);
+      const btnSave = document.createElement('button');
+      btnSave.className = 'mini-btn';
+      btnSave.textContent = 'APPLY JSON';
+      btnSave.style.marginTop = '6px';
+      btnSave.addEventListener('click', ()=>{
+        try{
+          const parsed = JSON.parse(ta.value || '{}');
+          const norm = normalizeSerializedEmitter(parsed);
+          if (!norm) throw new Error('invalid emitter json');
+          list[idx] = norm;
+          b.emitterSpecs = list;
+          saveBuilds?.();
+          syncWorkshopFromModel();
+        }catch(err){
+          alert('Emitter JSON 无效：' + (err?.message || err));
+        }
+      });
+      card.appendChild(ta);
+      card.appendChild(btnSave);
+    } else {
+      renderWorkshopEmitterEditor(card, item, idx, ()=>{
+        b.emitterSpecs = Array.isArray(b.emitterSpecs) ? b.emitterSpecs : [];
+        saveBuilds?.();
+        const graphEl = document.getElementById('ws_emitGraphJson');
+        if (graphEl) graphEl.value = JSON.stringify(b.emitterSpecs, null, 2);
+      });
+    }
+
+    root.appendChild(card);
+  });
 }
 
 

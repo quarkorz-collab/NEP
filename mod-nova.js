@@ -38,6 +38,9 @@ NEPForge.installShim({
     const isObj  = v => v !== null && typeof v === 'object';
     const isStr  = v => typeof v === 'string';
     const uid    = () => Math.random().toString(36).slice(2, 9);
+    const MAX_TOP_LEVEL_MODS = 120;
+    const MAX_TOTAL_MODS = 500;
+    const RESERVED_IDS = new Set(['nova', 'nova-forge', '__proto__', 'prototype', 'constructor']);
 
     function deepGet(obj, path) {
       return path.split('.').reduce((o, k) => (o != null ? o[k] : undefined), obj);
@@ -50,6 +53,36 @@ NEPForge.installShim({
     }
     function deepClone(v) {
       try { return JSON.parse(JSON.stringify(v)); } catch(_) { return v; }
+    }
+    function deepFreeze(obj, depth = 4) {
+      if (!isObj(obj) || depth <= 0 || Object.isFrozen(obj)) return obj;
+      Object.freeze(obj);
+      for (const v of Object.values(obj)) deepFreeze(v, depth - 1);
+      return obj;
+    }
+    function sanitizeId(raw) {
+      const id = String(raw || '').trim();
+      if (!id) return '';
+      if (id.length > 80) return '';
+      if (RESERVED_IDS.has(id)) return '';
+      if (!/^[a-zA-Z0-9._:@/-]+$/.test(id)) return '';
+      return id;
+    }
+    function validateDescriptor(desc, { strict = false } = {}) {
+      if (!isObj(desc)) return { ok: false, reason: 'descriptor must be an object' };
+      const allowed = new Set([
+        'id','name','version','description','state','catalog','patch','events','render','keys',
+        'waves','panel','services','mods','setup','tick','teardown',
+      ]);
+      for (const key of Object.keys(desc)) {
+        if (!allowed.has(key) && strict) return { ok: false, reason: `unknown descriptor key: ${key}` };
+      }
+      const id = sanitizeId(desc.id);
+      if (desc.id != null && !id) return { ok: false, reason: 'invalid id format' };
+      for (const k of ['setup', 'tick', 'teardown']) {
+        if (desc[k] != null && !isFunc(desc[k])) return { ok: false, reason: `${k} must be a function` };
+      }
+      return { ok: true };
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -488,7 +521,21 @@ NEPForge.installShim({
     }, 'nova-forge');
 
     function _install(desc, parentId = null) {
-      const id = desc.id || uid();
+      const normalizedId = sanitizeId(desc.id || uid());
+      const id = normalizedId || uid();
+      const checked = validateDescriptor({ ...desc, id });
+      if (!checked.ok) {
+        _error(`[Nova] invalid descriptor for "${id}": ${checked.reason}`);
+        return null;
+      }
+      if (!parentId && _topLevelRecords().length >= MAX_TOP_LEVEL_MODS) {
+        _warn(`[Nova] top-level mod limit reached (${MAX_TOP_LEVEL_MODS}).`);
+        return null;
+      }
+      if (_mods.size >= MAX_TOTAL_MODS) {
+        _warn(`[Nova] total mod limit reached (${MAX_TOTAL_MODS}).`);
+        return null;
+      }
       if (_mods.has(id)) {
         _warn(`[Nova] "${id}" already installed. Use Nova.reload(id) to reinstall.`);
         return id;
@@ -682,7 +729,7 @@ NEPForge.installShim({
         const code = ta.value.trim();
         if (!code) return;
         try {
-          new Function('Nova', 'NEPForge', code)(window.Nova, window.NEPForge);
+          new Function('"use strict";return function(Nova, NEPForge){\n' + code + '\n}')()(window.Nova, window.NEPForge);
           ta.value = '';
         } catch(e) {
           UIManager.toast(`Nova error: ${e.message}`, '#FF2F57', 3000);
@@ -858,7 +905,11 @@ NEPForge.installShim({
       def(id, descriptor) {
         if (!isStr(id))  throw new TypeError('Nova.def: id must be a string');
         if (!isObj(descriptor)) throw new TypeError('Nova.def: descriptor must be an object');
-        return _install({ id, ...descriptor });
+        const sid = sanitizeId(id);
+        if (!sid) throw new TypeError('Nova.def: id contains invalid characters or is reserved');
+        const checked = validateDescriptor({ id: sid, ...descriptor }, { strict: false });
+        if (!checked.ok) throw new TypeError(`Nova.def: ${checked.reason}`);
+        return _install({ id: sid, ...descriptor });
       },
 
       /** 批量安装：[{id, ...descriptor}] 或 {id: descriptor} */
@@ -867,15 +918,19 @@ NEPForge.installShim({
         if (Array.isArray(entries)) {
           for (const item of entries) {
             if (!isObj(item) || !isStr(item.id)) continue;
-            out.push(_install({ ...item }));
+            const sid = sanitizeId(item.id);
+            if (!sid) continue;
+            out.push(_install({ ...item, id: sid }));
           }
         } else if (isObj(entries)) {
           for (const [id, descriptor] of Object.entries(entries)) {
             if (!isObj(descriptor)) continue;
-            out.push(_install({ id, ...descriptor }));
+            const sid = sanitizeId(id);
+            if (!sid) continue;
+            out.push(_install({ id: sid, ...descriptor }));
           }
         }
-        return out;
+        return out.filter(Boolean);
       },
 
       /** 卸载一个 Nova Mod（含所有子 Mod 和插件） */
@@ -958,6 +1013,19 @@ NEPForge.installShim({
           failed,
         };
       },
+      validate(descriptor, opts = {}) {
+        return validateDescriptor(descriptor, opts);
+      },
+      securityReport() {
+        const top = _topLevelRecords();
+        const badIds = top.filter(r => !sanitizeId(r.id)).map(r => r.id);
+        return {
+          limits: { maxTopLevel: MAX_TOP_LEVEL_MODS, maxTotal: MAX_TOTAL_MODS },
+          current: { topLevel: top.length, total: _mods.size, plugins: _plugins.size },
+          invalidIds: badIds,
+          frozenApi: Object.isFrozen(window.Nova),
+        };
+      },
 
       /**
        * Nova.plugin(hostId, pluginId, descriptor)
@@ -965,16 +1033,19 @@ NEPForge.installShim({
        * 若宿主已加载，插件立即安装；否则等宿主安装时自动加载。
        */
       plugin(hostId, pluginId, descriptor) {
-        if (!_plugins.has(hostId)) _plugins.set(hostId, new Map());
-        _plugins.get(hostId).set(pluginId, descriptor);
-        const host = _mods.get(hostId);
+        const hostSafe = sanitizeId(hostId);
+        const pluginSafe = sanitizeId(pluginId);
+        if (!hostSafe || !pluginSafe) throw new Error('Nova.plugin: invalid hostId/pluginId');
+        if (!_plugins.has(hostSafe)) _plugins.set(hostSafe, new Map());
+        _plugins.get(hostSafe).set(pluginSafe, descriptor);
+        const host = _mods.get(hostSafe);
         if (host?.loaded) {
-          const pId = `${hostId}::plugin::${pluginId}`;
-          _install({ ...descriptor, id: pId }, hostId);
+          const pId = `${hostSafe}::plugin::${pluginSafe}`;
+          _install({ ...descriptor, id: pId }, hostSafe);
           host._subMods.push(pId);
           host.cleanup.add(() => _uninstall(pId));
         }
-        _info(`[Nova] Plugin "${pluginId}" registered for "${hostId}".`);
+        _info(`[Nova] Plugin "${pluginSafe}" registered for "${hostSafe}".`);
       },
 
       /**
@@ -1171,6 +1242,7 @@ NEPForge.installShim({
 `, 'color:#B36CFF;font-family:monospace;font-size:11px');
       },
     };
+    deepFreeze(window.Nova, 2);
 
     // Boot
     _createMenuTab();

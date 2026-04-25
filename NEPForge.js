@@ -5273,51 +5273,217 @@ NEPForge.install({
   }
 });
 `,
-};
 
-// 用 example.js 的示例替换内置示例，并静态整合扩展示例（含 LAB/停火/跳关等）
-for (const k of Object.keys(_EXAMPLES)) delete _EXAMPLES[k];
-Object.assign(_EXAMPLES, {
-  plasmaChain: `// Example #1 from example.js
-` +
-    `NEPForge.install({id:'plasma-chain',name:'Plasma Chain',version:'1.0',init(api){
-` +
-    `api.registry.affix('PLASMA_CHAIN',{tags:['hitfx','chain'],minWave:3,weight:0.9,color:'#52E6FF',onHit(b,t){if(!t?.alive)return;const es=(window.enemies||[]).filter(e=>e!==t&&e.alive).slice(0,3);for(const e of es){e.onHit?.(b.dmg*0.35);}window.spawnShockwave?.(t.x,t.y,'#52E6FF',60,0.18);}});
-` +
-    `api.log('Plasma Chain installed');}});`,
-  hivemindCollective: `// Example #2 from example.js
-` +
-    `NEPForge.install({id:'hivemind-collective',name:'Hivemind Collective',version:'1.0',init(api){
-` +
-    `api.registry.trait('HIVEMIND',{minWave:4,weight:0.7,group:'coordination',apply(e){e._hivemind=true;}});
-` +
-    `api.log('Hivemind installed');}});`,
-  orbitalCannon: `// Example #3 from example.js
-` +
-    `NEPForge.install({id:'orbital-cannon',name:'Orbital Cannon',version:'1.0',init(api){
-` +
-    `api.registry.emitter('ORBITAL_SHOT',(cfg)=>({cd:cfg.baseCd??2.0,fire(owner){const P=window.Player;if(!P)return;const a=Math.atan2(P.y-owner.y,P.x-owner.x);window.spawnBullet?.('E',owner.x,owner.y,Math.cos(a)*320,Math.sin(a)*320,{r:4,dmg:14,col:'#FFB020',life:1.3});}}));
-` +
-    `api.log('Orbital Cannon installed');}});`,
-  chronoSplit: `// Example #4 from example.js
-` +
-    `NEPForge.install({id:'chrono-split',name:'Chrono Split',version:'1.0',init(api){let on=false,t=0,c=0;api.patch.tap('spawnBullet',([side])=>{if(side==='E')c++;});api.patch.around('spawnBullet',(orig,side,x,y,vx,vy,opts)=>on&&side==='E'?orig(side,x,y,vx*0.4,vy*0.4,opts):orig(side,x,y,vx,vy,opts));api.events.on('forge:tick',(dt)=>{if(!on&&c>=10){on=true;t=1.2;c=0;}if(on){t-=dt;if(t<=0)on=false;}});}});`,
-  labMultiMonster: `// Static extra: LAB 多怪（同时存在多只 forge 怪）
-` +
-    `NEPForge.install({id:'lab-multi-spawner',name:'LAB Multi Spawner',version:'1.0',init(api){let cap=4;api.events.on('forge:tick',()=>{if(api.game.mode!=='lab'||api.game.state!=='playing')return;const F=api.resolver.get('Fortress');if(!F||F.phase!=='assault'||!F.labForgeSpec)return;const alive=(window.enemies||[]).filter(e=>e?.alive&&e.type==='ENEMY').length;for(let i=alive;i<cap;i++){window.spawnForgeEnemy?.(F.labForgeSpec);}});api.ui.toast('LAB MULTI READY','#B36CFF');}});`,
-  playerEmitterAffixControl: `// Static extra: 玩家 Emitter/Affix/停火动态控制
-` +
-    `NEPForge.install({id:'player-fire-control',name:'Player Fire Control',version:'1.0',init(api){const st={ceasefire:false};api.patch.around('firePlayer',(orig,dt)=>{if(!st.ceasefire)return orig(dt);},20);api.ui.floating({title:'FIRE CTRL',children:[api.ui.components.toggle({label:'CEASEFIRE',checked:false,onChange(v){st.ceasefire=!!v;}})]});}});`,
-  disableWarpForcedBuff: `// Static extra: 禁用跳关强制加成
-` +
-    `NEPForge.install({id:'no-warp-bonus',name:'No Warp Bonus',version:'1.0',init(api){api.patch.around('startRun',(orig,cfg={})=>{const b=JSON.parse(JSON.stringify(window.Builds?.A||{}));const w=Math.max(1,Number(cfg.wave||1));const out=orig(cfg);if(w<=1)return out;const p=window.Player;if(!p)return out;p.maxHp=b.maxHp??p.maxHp;p.hp=p.maxHp;p.fireRate=b.fireRate??p.fireRate;p.dmgMul=b.dmgMul??p.dmgMul;p.gunMods.length=0;for(const k of (b.gunMods||[]))p.gunMods.push(k);return out;},99);}});`,
-  adaptiveBossScaler: `// Static extra: 自适应 Boss 缩放（波次 + 玩家 DPS）
-` +
-    `NEPForge.install({id:'adaptive-boss-scaler',name:'Adaptive Boss Scaler',version:'1.0',init(api){api.patch.before('spawnEnemyCoreFromSpecs',([spec,d])=>{if(!spec||spec._scaledByMod)return;const wave=(window.Game?.wave||1);const p=window.Player||{};const dps=(p.dmgMul||1)*(p.fireRate||1);if((spec.hp||0)>=400){spec.hp=Math.floor((spec.hp||600)*(1+wave*0.02+Math.max(0,dps-1)*0.18));spec._scaledByMod=true;}});api.ui.toast('BOSS SCALER READY','#FFB020',1400);}});`,
-  survivalDropBooster: `// Static extra: 生存补给增强（低血量时提高补给概率）
-` +
-    `NEPForge.install({id:'survival-drop-booster',name:'Survival Drop Booster',version:'1.0',init(api){api.events.on('enemyDeath',(e)=>{const p=window.Player;if(!p||!p.alive||window.Game?.mode!=='survival')return;const hpRatio=(p.hp||1)/Math.max(1,p.maxHp||1);if(hpRatio<0.35&&Math.random()<0.25){window.spawnSupply?.(e.x,e.y,'HP');}});api.log('Drop booster enabled');}});`,
-});
+labMultiSpawner: `NEPForge.install({
+  id: 'lab-multi-spawner',
+  name: 'LAB Multi Spawner',
+  version: '1.0',
+  description: 'LAB 敌袭阶段允许玩家选择多种 Forge 敌人并同场作战（可动态调整数量上限）。',
+  init(api) {
+    let enabled = true;
+    let cap = 4;
+    let mixMode = true;
+    const selectedPool = [];
+    const selectedKeySet = new Set();
+    const makeSpecKey = (spec) => {
+      if (!spec) return '';
+      try {
+        return JSON.stringify({
+          name: spec.name || spec.title || 'Forge Enemy',
+          hp: spec.hp || 0,
+          emitters: (spec.emitters || []).map(e => e?.type || 'unknown'),
+          traits: spec.traits || [],
+        });
+      } catch (_) {
+        return String(Date.now() + Math.random());
+      }
+    };
+    const cloneSpec = (spec) => {
+      try { return JSON.parse(JSON.stringify(spec || {})); }
+      catch (_) { return spec ? { ...spec } : null; }
+    };
+    const addCurrentSpec = () => {
+      const Fortress = api.resolver.get('Fortress');
+      const cur = cloneSpec(Fortress?.labForgeSpec);
+      if (!cur) {
+        api.ui.toast('⚠ 当前没有可添加的 Forge 敌人', '#FFB020', 1300);
+        return;
+      }
+      const key = makeSpecKey(cur);
+      if (selectedKeySet.has(key)) {
+        api.ui.toast('ℹ 该敌人已在 LAB 池中', '#52E6FF', 1200);
+        return;
+      }
+      selectedKeySet.add(key);
+      selectedPool.push(cur);
+      api.ui.toast(\`✅ 已加入敌人池 (\${selectedPool.length})\`, '#50DC64', 1200);
+    };
+    const clearPool = () => {
+      selectedPool.length = 0;
+      selectedKeySet.clear();
+      api.ui.toast('🧹 已清空敌人池', '#FFB020', 1200);
+    };
+    const pickSpec = () => {
+      const Fortress = api.resolver.get('Fortress');
+      const fallback = Fortress?.labForgeSpec ? cloneSpec(Fortress.labForgeSpec) : null;
+      if (!mixMode) return fallback;
+      if (!selectedPool.length) return fallback;
+      const i = Math.floor(Math.random() * selectedPool.length);
+      return cloneSpec(selectedPool[i]);
+    };
+
+    api.ui.floating({
+      title: 'LAB MULTI',
+      style: { top: '18%', left: 'calc(100% - 260px)', width: '220px' },
+      children: [
+        { tag: 'div', style: 'font-size:11px;color:#9deeff;margin-bottom:6px;', text: 'LAB 同场怪物上限' },
+        api.ui.components.slider({ label: 'MONSTER CAP', min: 1, max: 12, step: 1, value: cap, onChange(v){ cap = Math.max(1, v|0); }}),
+        api.ui.components.toggle({ label: 'ENABLED', checked: true, onChange(v){ enabled = !!v; } }),
+        api.ui.components.toggle({ label: 'MIX MODE', checked: true, onChange(v){ mixMode = !!v; } }),
+        api.ui.components.button({ label: 'ADD CURRENT ENEMY', onClick(){ addCurrentSpec(); } }),
+        api.ui.components.button({ label: 'CLEAR ENEMY POOL', color: '#555', onClick(){ clearPool(); } }),
+        { tag: 'div', style: 'font-size:10px;color:#9aa;line-height:1.35;margin-top:4px;', text: '先在 LAB 中切换想要的 Forge 敌人，再点 ADD，可组合多种敌人。' },
+      ],
+    });
+
+    api.events.on('forge:tick', () => {
+      if (!enabled) return;
+      if (api.game.mode !== 'lab' || api.game.state !== 'playing') return;
+      const Fortress = api.resolver.get('Fortress');
+      if (!Fortress || Fortress.phase !== 'assault') return;
+
+      const aliveLab = (window.enemies || []).filter(e => e?.alive && e.type === 'ENEMY').length;
+      if (aliveLab >= cap) return;
+
+      const need = cap - aliveLab;
+      for (let i = 0; i < need; i++) {
+        const spec = pickSpec();
+        if (!spec) continue;
+        const e = window.spawnForgeEnemy?.(spec);
+        if (!e) continue;
+        e.x = (window.W || 400) * (0.25 + Math.random() * 0.5);
+        e.y = -20 - i * 28;
+      }
+    });
+
+    api.log('LAB Multi Spawner installed');
+  }
+});`,
+
+playerFireControl: `NEPForge.install({
+  id: 'player-fire-control',
+  name: 'Player Fire Control',
+  version: '1.0',
+  description: '游戏内动态开关玩家发射器、词条，并支持一键开火/停火。',
+  init(api) {
+    const state = {
+      ceasefire: false,
+      disabledEmitterIdx: new Set(),
+      disabledAffix: new Set(),
+      uiRefreshCd: 0,
+      panel: null,
+    };
+    const isEmitterEnabled = (idx) => !state.disabledEmitterIdx.has(idx);
+    const isAffixEnabled = (k) => !state.disabledAffix.has(k);
+
+    api.patch.around('firePlayer', (orig, dt) => {
+      if (!state.ceasefire) return orig(dt);
+    }, 20, { tag: 'ceasefire' });
+
+    api.patch.around('updatePlayerEmitters', (orig, dt) => {
+      const p = window.Player;
+      if (!p?.emitters?.length) return orig(dt);
+      const backup = p.emitters;
+      p.emitters = backup.filter((_, idx) => !state.disabledEmitterIdx.has(idx));
+      try { return orig(dt); }
+      finally { p.emitters = backup; }
+    }, 20, { tag: 'emitter-filter' });
+
+    api.patch.before('spawnBullet', ([team, x, y, vx, vy, opts], cancel) => {
+      if (team !== 'P' || !opts?.mods?.length) return;
+      const mods = opts.mods.filter(m => !state.disabledAffix.has(m));
+      return [team, x, y, vx, vy, { ...opts, mods }];
+    }, 10, { tag: 'affix-filter' });
+
+    const renderPanel = () => {
+      if (state.panel?.remove) state.panel.remove();
+      const p = window.Player || {};
+      const emitters = Array.isArray(p.emitters) ? p.emitters : [];
+      const affixes = Array.isArray(p.gunMods) ? p.gunMods : [];
+      state.panel = api.ui.floating({
+        title: 'FIRE CTRL',
+        style: { top: '48%', left: 'calc(100% - 280px)', width: '245px' },
+        children: [
+          api.ui.components.toggle({ label: 'CEASEFIRE', checked: state.ceasefire, onChange(v){ state.ceasefire = !!v; } }),
+          api.ui.components.button({ label: '⏹ STOP FIRE', color: '#FF2F57', onClick(){ state.ceasefire = true; } }),
+          api.ui.components.button({ label: '▶ RESUME FIRE', color: '#50DC64', onClick(){ state.ceasefire = false; } }),
+          { tag: 'div', style: 'font-size:10px;color:#9deeff;margin-top:5px;', text: 'Emitters（点击开/关）' },
+          ...emitters.map((em, idx) => api.ui.components.button({
+            label: \`\${isEmitterEnabled(idx) ? 'ON ' : 'OFF'} #\${idx + 1} \${(em?.type || em?.id || 'EMITTER')}\`,
+            color: isEmitterEnabled(idx) ? '#50DC64' : '#FFB020',
+            onClick() {
+              isEmitterEnabled(idx) ? state.disabledEmitterIdx.add(idx) : state.disabledEmitterIdx.delete(idx);
+              renderPanel();
+            }
+          })),
+          { tag: 'div', style: 'font-size:10px;color:#9deeff;margin-top:5px;', text: 'Affixes（点击开/关）' },
+          ...affixes.map((k) => api.ui.components.button({
+            label: \`\${isAffixEnabled(k) ? 'ON ' : 'OFF'} \${k}\`,
+            color: isAffixEnabled(k) ? '#52E6FF' : '#FFB020',
+            onClick() {
+              isAffixEnabled(k) ? state.disabledAffix.add(k) : state.disabledAffix.delete(k);
+              renderPanel();
+            }
+          })),
+        ],
+      });
+    };
+    renderPanel();
+    api.events.on('forge:tick', (_, dt = 0.016) => {
+      state.uiRefreshCd -= dt;
+      if (state.uiRefreshCd > 0) return;
+      state.uiRefreshCd = 0.6;
+      renderPanel();
+    });
+
+    api.log('Player Fire Control installed');
+  }
+});`,
+
+noWarpBonus: `NEPForge.install({
+  id: 'no-warp-bonus',
+  name: 'No Warp Bonus',
+  version: '1.0',
+  description: '跳关/高波开局时保留原始 Build 属性，不自动补发属性和词条。',
+  init(api) {
+    api.patch.around('startRun', (orig, cfg = {}) => {
+      const b = JSON.parse(JSON.stringify(window.Builds?.A || {}));
+      const startWave = Math.max(1, Number(cfg?.wave || 1));
+      const out = orig(cfg);
+      if (startWave <= 1) return out;
+
+      const p = window.Player;
+      if (!p) return out;
+      p.maxHp = b.maxHp ?? p.maxHp;
+      p.hp = p.maxHp;
+      p.fireRate = b.fireRate ?? p.fireRate;
+      p.dmgMul = b.dmgMul ?? p.dmgMul;
+      p.crit = b.crit ?? p.crit;
+      p.pierceBase = b.pierceBase ?? p.pierceBase;
+      p.drones = b.drones ?? p.drones;
+      p.homingAmmo = b.homingAmmo ?? p.homingAmmo;
+      p.bomb = b.bomb ?? p.bomb;
+      p.gunMods.length = 0;
+      for (const k of (b.gunMods || [])) p.gunMods.push(k);
+      if (typeof window.setupPlayerEmittersFromBuild === 'function') {
+        window.setupPlayerEmittersFromBuild(b);
+      }
+      api.log('No Warp Bonus reapplied base build');
+      return out;
+    }, 99, { tag: 'no-warp-bonus' });
+  }
+});`,
+};
 
 
 /* ═══════════════════════════════════════════════════════════════════════

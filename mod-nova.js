@@ -697,6 +697,7 @@ NEPForge.installShim({
     }
 
     let _novaUiTab = 'mods';
+    let _selectedModId = null;
     let _installDraft = '';
 
     function _renderTab(container) {
@@ -826,7 +827,102 @@ NEPForge.installShim({
           empty.textContent = 'No Nova mods installed';
           modSection.appendChild(empty);
         } else {
-          topLevelMods.forEach(rec => modSection.appendChild(_buildCard(rec)));
+          topLevelMods.forEach(rec => modSection.appendChild(_buildCard(rec, {
+            selected: rec.id === _selectedModId,
+            onOpen: () => {
+              _selectedModId = rec.id;
+              _refreshMenuTab();
+            },
+          })));
+          const selected = _mods.get(_selectedModId);
+          if (selected) {
+            const detail = document.createElement('div');
+            detail.style.cssText = 'margin-top:8px;padding:8px;border:1px solid rgba(82,230,255,0.35);background:rgba(82,230,255,0.08);';
+            detail.appendChild(mkSectionTitle(`Mod Detail · ${selected.desc?.name || selected.id}`, '#52E6FF'));
+
+            const meta = document.createElement('div');
+            meta.style.cssText = 'font-size:10px;color:#95b8bf;margin-bottom:8px;line-height:1.4;';
+            meta.textContent = `id=${selected.id} · loaded=${selected.loaded ? 'yes' : 'no'} · subMods=${selected._subMods?.length || 0}`;
+            detail.appendChild(meta);
+
+            const snap = selected.state?.snapshot?.() || {};
+            const keys = Object.keys(snap).filter(k => !k.startsWith('_')).sort();
+            const mkStateRow = (path, val) => {
+              const row = document.createElement('div');
+              row.style.cssText = 'display:grid;grid-template-columns:120px 1fr auto;gap:6px;align-items:center;margin-bottom:6px;';
+              const k = document.createElement('div');
+              k.style.cssText = 'font-family:monospace;font-size:10px;color:#9ed8e1;word-break:break-all;';
+              k.textContent = path;
+              const input = document.createElement('input');
+              input.value = typeof val === 'string' ? val : JSON.stringify(val);
+              input.style.cssText = 'padding:4px;background:#060d12;border:1px solid rgba(82,230,255,0.28);color:#d7f2f8;font-family:monospace;font-size:10px;';
+              const apply = mkMiniBtn('APPLY', '#52E6FF', () => {
+                let parsed = input.value;
+                try { parsed = JSON.parse(input.value); } catch(_) {}
+                selected.state?.set?.(path, parsed);
+                UIManager.toast(`state.${path} updated`, '#52E6FF', 1200);
+                _refreshMenuTab();
+              });
+              row.appendChild(k);
+              row.appendChild(input);
+              row.appendChild(apply);
+              return row;
+            };
+
+            if (!keys.length) {
+              const emptyState = document.createElement('div');
+              emptyState.style.cssText = 'font-size:10px;color:#7f9ca2;margin-bottom:6px;';
+              emptyState.textContent = 'This mod has no editable state keys yet.';
+              detail.appendChild(emptyState);
+            } else {
+              keys.forEach(key => detail.appendChild(mkStateRow(key, snap[key])));
+            }
+
+            const quickAdd = document.createElement('div');
+            quickAdd.style.cssText = 'display:grid;grid-template-columns:1fr 1fr auto;gap:6px;margin-top:8px;';
+            const pathInput = document.createElement('input');
+            pathInput.placeholder = 'new path (e.g. nested.flag)';
+            pathInput.style.cssText = 'padding:4px;background:#060d12;border:1px solid rgba(82,230,255,0.28);color:#d7f2f8;font-family:monospace;font-size:10px;';
+            const valueInput = document.createElement('input');
+            valueInput.placeholder = 'value (JSON or text)';
+            valueInput.style.cssText = pathInput.style.cssText;
+            quickAdd.appendChild(pathInput);
+            quickAdd.appendChild(valueInput);
+            quickAdd.appendChild(mkMiniBtn('ADD / SET', '#50DC64', () => {
+              const path = String(pathInput.value || '').trim();
+              if (!path) return;
+              let parsed = valueInput.value;
+              try { parsed = JSON.parse(valueInput.value); } catch(_) {}
+              selected.state?.set?.(path, parsed);
+              UIManager.toast(`state.${path} saved`, '#50DC64', 1200);
+              _refreshMenuTab();
+            }));
+            detail.appendChild(quickAdd);
+
+            const bulk = document.createElement('textarea');
+            bulk.style.cssText = 'width:100%;height:110px;margin-top:8px;background:#061017;border:1px solid rgba(82,230,255,0.28);color:#bfeaf4;font-family:monospace;font-size:10px;padding:6px;';
+            bulk.value = JSON.stringify(snap, null, 2);
+            detail.appendChild(bulk);
+            const bulkBtnRow = document.createElement('div');
+            bulkBtnRow.style.cssText = 'display:flex;gap:6px;margin-top:6px;';
+            bulkBtnRow.appendChild(mkMiniBtn('APPLY SNAPSHOT', '#FFB020', () => {
+              try {
+                const obj = JSON.parse(bulk.value || '{}');
+                if (!obj || typeof obj !== 'object') throw new Error('snapshot must be object');
+                selected.state?.reset?.(obj);
+                UIManager.toast('State snapshot applied', '#FFB020', 1200);
+                _refreshMenuTab();
+              } catch (e) {
+                UIManager.toast(`Snapshot parse error: ${e.message}`, '#FF2F57', 2200);
+              }
+            }));
+            bulkBtnRow.appendChild(mkMiniBtn('CLOSE DETAIL', '#999', () => {
+              _selectedModId = null;
+              _refreshMenuTab();
+            }));
+            detail.appendChild(bulkBtnRow);
+            modSection.appendChild(detail);
+          }
         }
         target.appendChild(modSection);
       };
@@ -875,17 +971,17 @@ NEPForge.installShim({
           {
             title: 'Pulse Shield',
             desc: '每 8 秒恢复一次护盾并显示提示。',
-            code: `Nova.def('example-pulse-shield', {\n  name:'Pulse Shield', version:'1.0',\n  state:{ cd:0 },\n  tick(ctx, dt){ ctx.state.cd += dt; if (ctx.state.cd >= 8) { ctx.state.cd = 0; const p = ctx.api.resolver.get('Player'); if (p) { p.shield = (p.shield||0) + 20; window.textPop?.(window.W*0.5, window.H-90, 'SHIELD +20', '#52E6FF'); } } }\n});`
+            code: `Nova.def('example-pulse-shield', {\n  name:'Pulse Shield', version:'1.0',\n  state:{ cd:0 },\n  tick(ctx, dt){\n    ctx.state.cd += dt;\n    if (ctx.state.cd < 8) return;\n    ctx.state.cd = 0;\n    const p = ctx.resolver.get('Player');\n    if (p) {\n      p.shield = (p.shield || 0) + 20;\n      window.textPop?.((window.W||400)*0.5, (window.H||600)-90, 'SHIELD +20', '#52E6FF');\n    }\n  }\n});`
           },
           {
             title: 'Wave Budget HUD',
             desc: '在屏幕左上角显示当前波次/敌人数。',
-            code: `Nova.def('example-wave-hud', {\n  name:'Wave Budget HUD', version:'1.0',\n  render:{\n    hud(ctx){\n      const Game = ctx.api.resolver.get('Game');\n      const enemies = ctx.api.resolver.get('enemies') || [];\n      window.drawText?.(8, 18, 'Wave ' + (Game?.wave||0) + '  Enemy ' + enemies.length, '#B36CFF');\n    }\n  }\n});`
+            code: `Nova.def('example-wave-hud', {\n  name:'Wave Budget HUD', version:'1.0',\n  render:{\n    post(g){\n      const Game = window.Game || null;\n      const enemies = window.enemies || [];\n      if (!g?.fillText) return;\n      g.save();\n      g.fillStyle = '#B36CFF';\n      g.font = '700 12px Consolas';\n      g.fillText('Wave ' + (Game?.wave||0) + '  Enemy ' + enemies.length, 10, 20);\n      g.restore();\n    }\n  }\n});`
           },
           {
             title: 'Auto Repair',
             desc: '血量低于 25% 时每秒小幅修复。',
-            code: `Nova.def('example-auto-repair', {\n  name:'Auto Repair', version:'1.0',\n  tick(ctx, dt){\n    const p = ctx.api.resolver.get('Player'); if (!p?.maxHp) return;\n    if (p.hp / p.maxHp < 0.25) p.hp = Math.min(p.maxHp, p.hp + 18 * dt);\n  }\n});`
+            code: `Nova.def('example-auto-repair', {\n  name:'Auto Repair', version:'1.0',\n  tick(ctx, dt){\n    const p = ctx.resolver.get('Player');\n    if (!p?.maxHp) return;\n    if (p.hp / p.maxHp < 0.25) p.hp = Math.min(p.maxHp, p.hp + 18 * dt);\n  }\n});`
           }
         ];
 
@@ -1061,14 +1157,16 @@ NEPForge.installShim({
       activateTab(tabDefs.some(t => t.key === _novaUiTab) ? _novaUiTab : 'mods');
     }
 
-    function _buildCard(record) {
+    function _buildCard(record, opts = {}) {
       const { id, desc, state, _subMods, _err, loaded } = record;
+      const { onOpen = null, selected = false } = opts;
       const card = document.createElement('div');
       card.style.cssText = `
         margin-bottom:7px;padding:7px;
-        background:${loaded ? 'rgba(179,108,255,0.05)' : 'rgba(255,47,87,0.04)'};
-        border:1px solid ${loaded ? 'rgba(179,108,255,0.28)' : 'rgba(255,47,87,0.28)'};
-        border-left:2px solid ${loaded ? '#B36CFF' : '#FF2F57'};
+        background:${selected ? 'rgba(82,230,255,0.08)' : (loaded ? 'rgba(179,108,255,0.05)' : 'rgba(255,47,87,0.04)')};
+        border:1px solid ${selected ? 'rgba(82,230,255,0.38)' : (loaded ? 'rgba(179,108,255,0.28)' : 'rgba(255,47,87,0.28)')};
+        border-left:2px solid ${selected ? '#52E6FF' : (loaded ? '#B36CFF' : '#FF2F57')};
+        cursor:pointer;
       `;
 
       // Title row
@@ -1137,8 +1235,17 @@ NEPForge.installShim({
       }
 
       // Buttons
-      card.querySelector('[data-action="reload"]')?.addEventListener('click', () => Nova.reload(id));
-      card.querySelector('[data-action="unload"]')?.addEventListener('click', () => Nova.unload(id));
+      card.querySelector('[data-action="reload"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Nova.reload(id);
+      });
+      card.querySelector('[data-action="unload"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Nova.unload(id);
+      });
+      if (typeof onOpen === 'function') {
+        card.addEventListener('click', () => onOpen(record));
+      }
 
       return card;
     }

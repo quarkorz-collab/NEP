@@ -3215,16 +3215,18 @@ function _injectMenuTab() {
 
   /* MODS TAB */
   function _renderModList(container) {
+    const listRoot = mkEl('div');
+    container.appendChild(listRoot);
     const conflicts = ConflictGuard.report();
     if (conflicts.length) {
       const b = mkEl('div');
       b.className = 'nep-conflict-banner';
       b.textContent = `⚠ ${conflicts.length} conflict(s): ` + conflicts.map(c=>`${c.key}[${c.mods.join(',')}]`).join('; ');
-      container.appendChild(b);
+      listRoot.appendChild(b);
     }
     const mods = ModLoader.list();
     if (!mods.length) {
-      container.innerHTML = '<div style="color:rgba(255,255,255,0.26);text-align:center;padding:28px 0;font-size:11px">No mods registered.<br>Use the INSTALL tab to add mods.</div>';
+      listRoot.innerHTML = '<div style="color:rgba(255,255,255,0.26);text-align:center;padding:28px 0;font-size:11px">No mods registered.<br>Use the INSTALL tab to add mods.</div>';
     } else {
       mods.forEach(m => {
         const cls    = m.error ? 'error' : m.loaded ? 'loaded' : '';
@@ -3247,15 +3249,15 @@ function _injectMenuTab() {
             <button class="nep-btn ${m.enabled?'':'green'}" data-action="${m.enabled?'disable':'enable'}" data-id="${m.id}">${m.enabled?'DISABLE':'ENABLE'}</button>
             <button class="nep-btn danger" data-action="remove" data-id="${m.id}">✕</button>
           </div>`;
-        container.appendChild(card);
+        listRoot.appendChild(card);
       });
     }
     const gr = mkEl('div','display:flex;gap:5px;margin-top:8px;flex-wrap:wrap;');
     gr.innerHTML = `<button class="nep-btn cyan" data-action="loadAll">LOAD ALL</button>
                     <button class="nep-btn danger" data-action="unloadAll">UNLOAD ALL</button>`;
-    container.appendChild(gr);
+    listRoot.appendChild(gr);
 
-    container.addEventListener('click', e => {
+    listRoot.addEventListener('click', e => {
       const btn = e.target.closest('[data-action]');
       if (!btn) return;
       const { action, id } = btn.dataset;
@@ -4694,6 +4696,86 @@ if((wave%3)===0 && spawnShockwave){
     }
   }, null, 2),
 
+  prismOverdrive: JSON.stringify({
+    id:'example-prism-overdrive', name:'Prism Overdrive', version:'1.0',
+    description:'Player rounds cycle spectral buffs: split, pierce, and reactive crit glow',
+    hooks: {
+      bulletSpawn:`if(!b || b.team!=="P") return;
+const wave = Game?.wave || 1;
+const mode = (wave + Math.floor((performance?.now?.()||0)/700)) % 3;
+if(mode===0){
+  if(!b._prismSplit){
+    b._prismSplit = true;
+    const a = Math.atan2(b.vy, b.vx);
+    const sp = Math.hypot(b.vx, b.vy) || 520;
+    const d = 0.18;
+    spawnBullet?.('P', b.x, b.y, Math.cos(a+d)*sp, Math.sin(a+d)*sp,
+      { r:Math.max(2,(b.r||2)-0.4), dmg:(b.dmg||8)*0.62, life:(b.life||0.7)*0.85, col:'#52E6FF' });
+    spawnBullet?.('P', b.x, b.y, Math.cos(a-d)*sp, Math.sin(a-d)*sp,
+      { r:Math.max(2,(b.r||2)-0.4), dmg:(b.dmg||8)*0.62, life:(b.life||0.7)*0.85, col:'#FF4FCB' });
+  }
+} else if(mode===1){
+  b.pierce = Math.max(2, b.pierce||0);
+  b.col = '#7DFFB2';
+  b.life = (b.life||0.8)*1.08;
+} else {
+  if(Math.random() < 0.17){
+    b.dmg = (b.dmg||8) * 2.2;
+    b.r = (b.r||2) * 1.25;
+    b.col = '#FFD15C';
+    textPop?.(b.x,b.y,'CRIT','#FFD15C');
+  }
+}`
+    },
+    loadMessage:'PRISM OVERDRIVE ONLINE'
+  }, null, 2),
+
+  chronoAnchor: JSON.stringify({
+    id:'example-chrono-anchor', name:'Chrono Anchor', version:'1.0',
+    description:'Every 4th wave creates a temporal anchor that slows nearby enemies and beams them',
+    structures: {
+      chrono_anchor: {
+        cost:16, w:32, h:32, hp:620, col:'#6C8CFF', type:'chrono_anchor',
+        behavior: {
+          onCreate(st){ st.cd=0; st.pulse=0; },
+          onUpdate(st, dt){
+            st.cd -= dt; st.pulse += dt;
+            const es = enemies || [];
+            for(const e of es){
+              const dx=e.x-st.x, dy=e.y-st.y;
+              const d2=dx*dx+dy*dy;
+              if(d2 < 220*220){
+                e.vx *= 0.985;
+                e.vy *= 0.985;
+                if(st.pulse > 0.4){
+                  textPop?.(e.x, e.y, 'TIME LOCK', '#6C8CFF');
+                }
+              }
+            }
+            if(st.pulse > 0.4){ st.pulse = 0; }
+            if(st.cd > 0) return;
+            const t = findNearestEnemy?.(st.x, st.y, 380);
+            if(!t) return;
+            spawnBeam?.(st.x, st.y, t.x, t.y, '#6C8CFF', 1.2, 22);
+            spawnBullet?.('P', st.x, st.y, 0, 0, { r:1, dmg:18+(Game?.wave||1)*1.3, life:0.01, col:'#6C8CFF' });
+            st.cd = 0.5;
+          }
+        }
+      }
+    },
+    hooks: {
+      wave:`if((wave%4)===0 && Fortress?.structures){
+  Fortress.structures.push({
+    type:'chrono_anchor',
+    x:(W||400)*0.5 + (Math.random()*120-60),
+    y:(H||600)*0.5 + 140 + (Math.random()*40-20),
+    hp:620,maxHp:620,col:'#6C8CFF',w:32,h:32,cd:0,pulse:0
+  });
+  textPop?.((W||400)*0.5,(H||600)*0.5+110,'CHRONO ANCHOR','#6C8CFF');
+}`
+    }
+  }, null, 2),
+
   vampireHook: `// Watch API Demo: 拦截分数获取，造成伤害回血
 NEPForge.install({
   id:'vampire-hook', name:'Vampire Drain & Score Double', version:'1.0',
@@ -4758,6 +4840,185 @@ NEPForge.install({
       ctx.restore();
     });
     api.log('Tick counter started');
+  }
+});`,
+
+  novaAegisAntiCheat:`// Nova Aegis Sentinel: advanced anti-cheat / anti-tamper layer for Nova
+// Multi-layer defense: integrity baseline, global overwrite firewall, patch provenance scan,
+// anti-anti-cheat bait, strict-mode auto response, and safe fallback to keep gameplay stable.
+Nova.def('nova-aegis-sentinel', {
+  name: 'Nova Aegis Sentinel',
+  version: '3.4.0',
+  description: 'Powerful anti-cheat with self-protection, rollback, and anti-countermeasures.',
+  state: {
+    enabled: true,
+    strictMode: false,
+    paranoia: 3,
+    blocked: 0,
+    healed: 0,
+    alerts: 0,
+    tamperTouches: 0,
+    lastReason: 'boot'
+  },
+  panel: {
+    title: 'Aegis Sentinel',
+    position: { top:'84px', right:'20px', width:'320px' },
+    controls: [
+      { type:'heading', text:'RUNTIME DEFENSE' },
+      { type:'toggle', label:'Enable defense', state:'enabled' },
+      { type:'toggle', label:'Strict mode', state:'strictMode' },
+      { type:'slider', label:'Paranoia', state:'paranoia', min:1, max:5, step:1 },
+      { type:'separator' },
+      { type:'display', label:'Blocked', bind:'blocked' },
+      { type:'display', label:'Healed', bind:'healed' },
+      { type:'display', label:'Alerts', bind:'alerts' },
+      { type:'display', label:'Tamper touches', bind:'tamperTouches' },
+      { type:'display', label:'Last reason', bind:'lastReason' }
+    ]
+  },
+  setup(ctx) {
+    const S = ctx.state;
+    const allowMods = new Set(['nova-aegis-sentinel', 'nova-forge']);
+    const hardenBag = {};
+    const base = {
+      playerProto: Object.getOwnPropertyNames(Object.getPrototypeOf(window.Player || {})).sort().join('|'),
+      gameKeys: Object.keys(window.Game || {}).sort().join('|'),
+      stepLen: String(window.step || '').length,
+      spawnLen: String(window.spawnBullet || '').length
+    };
+    const ring = [];
+    const ringPush = (lvl, msg) => {
+      ring.push({ t: Date.now(), lvl, msg });
+      if (ring.length > 140) ring.shift();
+      if (lvl !== 'log') {
+        S.alerts = (S.alerts || 0) + 1;
+        S.lastReason = msg;
+      }
+      ctx.toast('Aegis: ' + msg, lvl === 'error' ? '#FF2F57' : lvl === 'warn' ? '#FFB020' : '#52E6FF', 1400);
+    };
+    const guardGlobal = (key) => {
+      try {
+        const d = Object.getOwnPropertyDescriptor(window, key);
+        if (d && !d.configurable) return;
+        let shadow = window[key];
+        hardenBag[key] = d;
+        Object.defineProperty(window, key, {
+          configurable: true, enumerable: true,
+          get(){ return shadow; },
+          set(v){
+            if (!S.enabled) { shadow = v; return; }
+            const stack = (new Error()).stack || '';
+            if (stack.includes('nova-aegis-sentinel')) { shadow = v; return; }
+            S.blocked = (S.blocked || 0) + 1;
+            ringPush('warn', 'blocked overwrite ' + key);
+          }
+        });
+      } catch(_) {}
+    };
+    ['Game','Player','WaveDirector','EnemyFactory','spawnBullet','step'].forEach(guardGlobal);
+
+    // console firewall
+    if (window.console && typeof window.console.clear === 'function') {
+      const rawClear = window.console.clear.bind(window.console);
+      hardenBag.consoleClear = rawClear;
+      window.console.clear = function() {
+        if (!S.enabled || S.paranoia <= 1) return rawClear();
+        S.blocked += 1;
+        ringPush('warn', 'console.clear blocked');
+      };
+    }
+
+    // anti-anti-cheat bait
+    const baitToken = Math.random().toString(36).slice(2);
+    Object.defineProperty(window, '__NOVA_AEGIS_BAIT__', {
+      configurable: true,
+      enumerable: false,
+      get(){ return baitToken; },
+      set(v){
+        S.tamperTouches = (S.tamperTouches || 0) + 1;
+        S.blocked = (S.blocked || 0) + 1;
+        ringPush('warn', 'tamper bait touched');
+      }
+    });
+    hardenBag.bait = true;
+
+    const driftCheck = () => {
+      if (!S.enabled) return;
+      const nowPlayerProto = Object.getOwnPropertyNames(Object.getPrototypeOf(window.Player || {})).sort().join('|');
+      const nowGameKeys = Object.keys(window.Game || {}).sort().join('|');
+      const nowStepLen = String(window.step || '').length;
+      const nowSpawnLen = String(window.spawnBullet || '').length;
+      const drifted = nowPlayerProto !== base.playerProto || nowGameKeys !== base.gameKeys
+        || Math.abs(nowStepLen - base.stepLen) > 40 || Math.abs(nowSpawnLen - base.spawnLen) > 40;
+      if (!drifted) return;
+      S.healed = (S.healed || 0) + 1;
+      ringPush('warn', 'integrity drift detected');
+      const p = window.Player;
+      if (p && typeof p === 'object') {
+        if (!Number.isFinite(p.hp) || p.hp <= 0) p.hp = Math.max(1, p.maxHp || 100);
+        if (!Number.isFinite(p.energy)) p.energy = 0;
+        if (!Number.isFinite(p.shield)) p.shield = 0;
+      }
+    };
+
+    const conflicts = () => {
+      const report = ctx.nep?.diagnostics?.conflicts?.() || [];
+      for (const c of report) {
+        const unknown = (c.mods || []).filter(m => !allowMods.has(m));
+        if (!unknown.length) continue;
+        ringPush('warn', 'suspicious patch ' + c.key);
+        if (S.strictMode) {
+          unknown.forEach(mid => { try { window.Nova?.unload?.(mid); } catch(_) {} });
+        }
+      }
+    };
+
+    const step = Math.max(40, 92 - (S.paranoia || 3) * 12);
+    window.__NOVA_AEGIS_RUNTIME__ = hardenBag;
+    window.__NOVA_AEGIS_LAST_BOOT__ = Date.now();
+    ctx.log('Aegis sentinel online');
+
+    hardenBag.tickFn = function(dt) {
+      if (!S.enabled) return;
+      if ((Game?.tick || 0) % step === 0) { driftCheck(); conflicts(); }
+      if (dt > 0.18) ringPush('log', 'frame spike');
+      if ((S.alerts || 0) > 24 && !S.strictMode) {
+        S.strictMode = true;
+        ringPush('warn', 'strict mode auto-enabled');
+      }
+    };
+    hardenBag.waveFn = function(wave) {
+      if (!S.enabled) return;
+      if (wave % 5 === 0) {
+        textPop?.((W||400)*0.5, (H||600)-80, 'AEGIS '+wave+' B'+(S.blocked||0)+' H'+(S.healed||0), '#52E6FF');
+      }
+    };
+  },
+  events: {
+    'forge:tick': (dt) => {
+      const local = window.__NOVA_AEGIS_RUNTIME__ || null;
+      if (local && typeof local.tickFn === 'function') local.tickFn(dt);
+    },
+    'wave:start': (wave) => {
+      const local = window.__NOVA_AEGIS_RUNTIME__ || null;
+      if (local && typeof local.waveFn === 'function') local.waveFn(wave);
+    }
+  },
+  teardown() {
+    const local = window.__NOVA_AEGIS_RUNTIME__ || null;
+    try {
+      if (local?.consoleClear && window.console) window.console.clear = local.consoleClear;
+      if (local?.bait) delete window.__NOVA_AEGIS_BAIT__;
+    } catch(_) {}
+    ['Game','Player','WaveDirector','EnemyFactory','spawnBullet','step'].forEach(k => {
+      if (local && Object.prototype.hasOwnProperty.call(local, k)) {
+        try {
+          const d = local[k];
+          if (d) Object.defineProperty(window, k, d);
+        } catch(_) {}
+      }
+    });
+    window.__NOVA_AEGIS_RUNTIME__ = null;
   }
 });`,
 

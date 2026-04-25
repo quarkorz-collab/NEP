@@ -607,6 +607,30 @@ NEPForge.installShim({
       _info(`[Nova] "${record.desc.name || id}" uninstalled.`);
     }
 
+    function _topLevelRecords() {
+      return [..._mods.values()].filter(r => !r.parentId);
+    }
+
+    function _snapshotTopLevelDescriptors() {
+      return _topLevelRecords().map(r => ({
+        id: r.id,
+        descriptor: { ...r.desc },
+      }));
+    }
+
+    function _restoreFromSnapshot(snapshot = []) {
+      if (!Array.isArray(snapshot)) return { restored: 0 };
+      let restored = 0;
+      for (const item of snapshot) {
+        const id = item?.id;
+        const descriptor = item?.descriptor;
+        if (!isStr(id) || !isObj(descriptor)) continue;
+        _install({ ...descriptor, id });
+        restored++;
+      }
+      return { restored };
+    }
+
     // ═══════════════════════════════════════════════════════════════
     //  12. MENU TAB
     // ═══════════════════════════════════════════════════════════════
@@ -633,7 +657,7 @@ NEPForge.installShim({
       hdr.style.cssText = 'padding:6px 0 10px;border-bottom:1px solid rgba(179,108,255,0.25);margin-bottom:10px;';
       hdr.innerHTML = `
         <div style="font-size:17px;font-weight:900;color:#B36CFF;letter-spacing:3px;text-shadow:0 0 14px #B36CFF55;">✦ NOVA FORGE</div>
-        <div style="font-size:9px;color:#555;margin-top:2px;font-family:monospace;">META-MODLOADER v1.0 · ${[..._mods.values()].filter(m => !m.parentId).length} mods · Type Nova.help() for docs</div>
+        <div style="font-size:9px;color:#555;margin-top:2px;font-family:monospace;">META-MODLOADER v1.1 · ${[..._mods.values()].filter(m => !m.parentId).length} mods · Type Nova.help() for docs</div>
       `;
       container.appendChild(hdr);
 
@@ -680,6 +704,33 @@ NEPForge.installShim({
       sHdr.style.cssText = 'font-size:9px;color:#B36CFF;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;';
       sHdr.textContent = `Active Mods (${topLevelMods.length})`;
       modSection.appendChild(sHdr);
+
+      const toolbox = document.createElement('div');
+      toolbox.style.cssText = 'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin:0 0 8px 0;';
+      const toolboxBtn = (label, col, fn) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.style.cssText = `padding:4px 6px;font-family:monospace;font-size:9px;background:rgba(${col},0.08);border:1px solid rgba(${col},0.35);color:rgb(${col});cursor:pointer;text-transform:uppercase;`;
+        b.addEventListener('click', fn);
+        return b;
+      };
+      toolbox.appendChild(toolboxBtn('RELOAD ALL', '82,230,255', () => window.Nova?.reloadAll()));
+      toolbox.appendChild(toolboxBtn('UNLOAD ALL', '255,47,87', () => window.Nova?.unloadAll()));
+      toolbox.appendChild(toolboxBtn('SAVE PROFILE', '179,108,255', () => {
+        const key = prompt('Profile name?', `profile-${Date.now()}`);
+        if (!key) return;
+        const res = window.Nova?.profile?.save(key);
+        UIManager.toast(`Saved ${res?.count || 0} mods → ${key}`, '#B36CFF', 2000);
+      }));
+      toolbox.appendChild(toolboxBtn('LOAD PROFILE', '255,176,32', () => {
+        const names = window.Nova?.profile?.list?.() || [];
+        if (!names.length) { UIManager.toast('No profile found', '#FF2F57', 1800); return; }
+        const key = prompt(`Load profile:\n${names.join('\n')}`, names[0]);
+        if (!key) return;
+        const res = window.Nova?.profile?.load(key, { clear: true });
+        UIManager.toast(`Loaded ${res?.restored || 0} mods ← ${key}`, '#FFB020', 2200);
+      }));
+      modSection.appendChild(toolbox);
 
       if (topLevelMods.length === 0) {
         const empty = document.createElement('div');
@@ -822,13 +873,36 @@ NEPForge.installShim({
         _install(desc);
       },
 
+      /** 重载所有顶层 Mod（按当前加载顺序） */
+      reloadAll() {
+        const ids = _topLevelRecords().map(r => r.id);
+        let ok = 0;
+        for (const id of ids) {
+          const rec = _mods.get(id);
+          if (!rec) continue;
+          const desc = rec.desc;
+          _uninstall(id);
+          _install(desc);
+          ok++;
+        }
+        _info(`[Nova] reloadAll done (${ok}).`);
+        return ok;
+      },
+
+      /** 卸载所有顶层 Mod */
+      unloadAll() {
+        const ids = _topLevelRecords().map(r => r.id);
+        ids.forEach(id => _uninstall(id));
+        _info(`[Nova] unloadAll done (${ids.length}).`);
+        return ids.length;
+      },
+
       /** 获取 Mod 记录（包含 state、desc、subMods 等） */
       get(id) { return _mods.get(id) || null; },
 
       /** 列出所有顶层 Nova Mod */
       list() {
-        return [..._mods.values()]
-          .filter(r => !r.parentId)
+        return _topLevelRecords()
           .map(r => ({
             id:      r.id,
             name:    r.desc.name || r.id,
@@ -923,19 +997,68 @@ NEPForge.installShim({
         watch: (k, cb)  => SharedStore.watch('nova', k, cb, 'nova-forge'),
       },
 
-      version: '1.0.0',
+      /** 导出/导入 mod pack，便于跨设备迁移 */
+      exportPack() {
+        return _snapshotTopLevelDescriptors();
+      },
+      importPack(snapshot, { clear = false } = {}) {
+        if (clear) this.unloadAll();
+        return _restoreFromSnapshot(snapshot);
+      },
+
+      /** 类似 NX/OMEGA 的 profile 工作流：保存/恢复整套 mod 组合 */
+      profile: {
+        save(name) {
+          const key = String(name || '').trim();
+          if (!key) throw new Error('Nova.profile.save: name required');
+          const all = SharedStore.get('nova', '__profiles__', {});
+          const pack = _snapshotTopLevelDescriptors();
+          all[key] = {
+            savedAt: Date.now(),
+            mods: pack,
+          };
+          SharedStore.set('nova', '__profiles__', all, 'nova-forge');
+          return { key, count: pack.length };
+        },
+        list() {
+          const all = SharedStore.get('nova', '__profiles__', {});
+          return Object.keys(all);
+        },
+        load(name, { clear = true } = {}) {
+          const key = String(name || '').trim();
+          const all = SharedStore.get('nova', '__profiles__', {});
+          const profile = all[key];
+          if (!profile) throw new Error(`Nova.profile.load: profile "${key}" not found`);
+          if (clear) window.Nova?.unloadAll?.();
+          return _restoreFromSnapshot(profile.mods);
+        },
+        remove(name) {
+          const key = String(name || '').trim();
+          const all = SharedStore.get('nova', '__profiles__', {});
+          if (!all[key]) return false;
+          delete all[key];
+          SharedStore.set('nova', '__profiles__', all, 'nova-forge');
+          return true;
+        }
+      },
+
+      version: '1.1.0',
 
       help() {
         console.log(`%c
 ╔══════════════════════════════════════════════════════════════════╗
-║  ✦  NOVA FORGE v1.0  ·  Elegant Meta-Loader for NEP             ║
+║  ✦  NOVA FORGE v1.1  ·  Elegant Meta-Loader for NEP             ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║  INSTALL                                                          ║
 ║    Nova.def(id, descriptor)    Define + install a Nova mod       ║
 ║    Nova.unload(id)             Unload a mod                      ║
 ║    Nova.reload(id)             Hot-reload                        ║
+║    Nova.reloadAll()            Reload all top-level mods          ║
+║    Nova.unloadAll()            Unload all top-level mods          ║
 ║    Nova.compose(id, ...descs)  Merge + install multiple descs    ║
 ║    Nova.plugin(host, id, desc) Register a plugin sub-mod         ║
+║    Nova.exportPack()/importPack(pack,{clear})                    ║
+║    Nova.profile.save/load/list/remove(name)                       ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║  DESCRIPTOR FIELDS                                                ║
 ║    state       { key: defaultValue }   Reactive proxy state      ║
@@ -973,7 +1096,7 @@ NEPForge.installShim({
 
     // Boot
     _createMenuTab();
-    _info('[Nova] ✦ Nova Forge v1.0 initialized. Menu tab registered. Nova.help() for docs.');
-    UIManager.toast('✦ NOVA FORGE v1.0', '#B36CFF', 3500);
+    _info('[Nova] ✦ Nova Forge v1.1 initialized. Menu tab registered. Nova.help() for docs.');
+    UIManager.toast('✦ NOVA FORGE v1.1', '#B36CFF', 3500);
   }
 });

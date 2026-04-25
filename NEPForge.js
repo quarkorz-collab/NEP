@@ -1463,6 +1463,12 @@ const RenderPipeline = (() => {
         const guarded = _canGuardCtx(gc);
         if (guarded) { try { gc.save(); } catch(_) {} }
         try {
+          // Normalize per-hook canvas state so previous draw transforms/styles
+          // cannot leak into mod overlays unpredictably.
+          if (typeof gc.resetTransform === 'function') gc.resetTransform();
+          else if (typeof gc.setTransform === 'function') gc.setTransform(1, 0, 0, 1, 0, 0);
+          if (gc && typeof gc.textAlign === 'string') gc.textAlign = 'left';
+          if (gc && typeof gc.textBaseline === 'string') gc.textBaseline = 'alphabetic';
           h.fn(payload);
         } catch(e1) {
           const msg = String(e1?.message || e1 || '');
@@ -5542,29 +5548,68 @@ noWarpBonus: `NEPForge.install({
   version: '1.0',
   description: '跳关/高波开局时保留原始 Build 属性，不自动补发属性和词条。',
   init(api) {
+    const pickBuildA = () => {
+      const fromWorkshop = window.MenuUI?.editKey === 'B' ? window.Builds?.B : window.Builds?.A;
+      return JSON.parse(JSON.stringify(fromWorkshop || window.Builds?.A || {}));
+    };
+
+    const restoreEmitterGraphState = (build) => {
+      if (!build || typeof build !== 'object') return;
+      if (typeof window.setupPlayerEmittersFromBuild === 'function') {
+        window.setupPlayerEmittersFromBuild(build);
+      }
+      if (typeof window.ensureWorkshopEmitterGraphState === 'function') window.ensureWorkshopEmitterGraphState();
+      if (typeof window.syncWorkshopFromModel === 'function') window.syncWorkshopFromModel();
+      if (typeof window.renderWorkshopEmitterGraphUI === 'function') window.renderWorkshopEmitterGraphUI();
+    };
+
+    const restoreBuildToPlayer = (build) => {
+      const p = window.Player;
+      if (!p || !build) return false;
+      const startLv = Math.max(1, Math.min(120, Number(build.startLv || 1) || 1));
+      p.lv = startLv;
+      p.xp = 0;
+      if (typeof window.xpNeedFor === 'function') p.xpNeed = window.xpNeedFor(startLv);
+      p.maxHp = build.maxHp ?? p.maxHp;
+      p.hp = Math.max(1, build.hp ?? build.maxHp ?? p.maxHp ?? p.hp ?? 1);
+      p.fireRate = build.fireRate ?? p.fireRate;
+      p.dmgMul = build.dmgMul ?? p.dmgMul;
+      p.crit = build.crit ?? p.crit;
+      p.pierceBase = build.pierceBase ?? p.pierceBase;
+      p.drones = build.drones ?? p.drones;
+      p.homingAmmo = build.homingAmmo ?? p.homingAmmo;
+      p.bomb = build.bomb ?? p.bomb;
+      p.shield = build.shield ?? p.shield ?? 0;
+
+      if (!Array.isArray(p.gunMods)) p.gunMods = [];
+      p.gunMods.length = 0;
+      for (const k of (build.gunMods || [])) p.gunMods.push(k);
+
+      restoreEmitterGraphState(build);
+      return true;
+    };
+
+    const suppressUpgradePoolDuring = (fn) => {
+      const pool = window.UpgradePool || {};
+      const restores = [];
+      for (const [k, u] of Object.entries(pool)) {
+        if (!u || typeof u.apply !== 'function') continue;
+        const rawApply = u.apply;
+        u.apply = function nopApply() {};
+        restores.push(() => { u.apply = rawApply; });
+      }
+      try { return fn(); }
+      finally { restores.forEach(r => { try { r(); } catch(_) {} }); }
+    };
+
     api.patch.around('startRun', (orig, cfg = {}) => {
-      const b = JSON.parse(JSON.stringify(window.Builds?.A || {}));
+      const b = pickBuildA();
       const startWave = Math.max(1, Number(cfg?.wave || 1));
-      const out = orig(cfg);
+      const out = suppressUpgradePoolDuring(() => orig(cfg));
       if (startWave <= 1) return out;
 
-      const p = window.Player;
-      if (!p) return out;
-      p.maxHp = b.maxHp ?? p.maxHp;
-      p.hp = p.maxHp;
-      p.fireRate = b.fireRate ?? p.fireRate;
-      p.dmgMul = b.dmgMul ?? p.dmgMul;
-      p.crit = b.crit ?? p.crit;
-      p.pierceBase = b.pierceBase ?? p.pierceBase;
-      p.drones = b.drones ?? p.drones;
-      p.homingAmmo = b.homingAmmo ?? p.homingAmmo;
-      p.bomb = b.bomb ?? p.bomb;
-      p.gunMods.length = 0;
-      for (const k of (b.gunMods || [])) p.gunMods.push(k);
-      if (typeof window.setupPlayerEmittersFromBuild === 'function') {
-        window.setupPlayerEmittersFromBuild(b);
-      }
-      api.log('No Warp Bonus reapplied base build');
+      const reapplied = restoreBuildToPlayer(b);
+      if (reapplied) api.log('No Warp Bonus reapplied workshop build and suppressed lv upgrades');
       return out;
     }, 99, { tag: 'no-warp-bonus' });
   }

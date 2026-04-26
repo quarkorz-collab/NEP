@@ -477,6 +477,18 @@ NEPForge.installShim({
     // ═══════════════════════════════════════════════════════════════
     function buildCtx(record) {
       const { id, state, parentId } = record;
+      const scopedUi = {
+        ...NEP.ui,
+        registerCustomTab: (label, key, renderFn) => {
+          record._customTabs?.add?.(String(key || ''));
+          return NEP.ui?.registerCustomTab?.(label, key, renderFn, id);
+        },
+        injectMenuTab: (label, key, renderFn) => {
+          record._customTabs?.add?.(String(key || ''));
+          return NEP.ui?.injectMenuTab?.(label, key, renderFn, id);
+        },
+      };
+      const scopedNEP = { ...NEP, ui: scopedUi };
       return {
         id,
         state,
@@ -484,7 +496,7 @@ NEPForge.installShim({
         game:       GameAPI,
         player:     PlayerAPI,
         fort:       FortressAPI,
-        nep:        NEP,
+        nep:        scopedNEP,
         resolver:   GlobalResolver,
         // Parent state access (for sub-mods)
         parentState: parentId ? (_mods.get(parentId)?.state || null) : null,
@@ -547,7 +559,7 @@ NEPForge.installShim({
       const record  = {
         id, desc, parentId, state, cleanup,
         loaded: false, enabled: true,
-        _subMods: [], _err: null,
+        _subMods: [], _err: null, _customTabs: new Set(),
       };
       _mods.set(id, record);
 
@@ -647,6 +659,7 @@ NEPForge.installShim({
       }
 
       record.cleanup.runAll();
+      UIManager.unregisterCustomTabsByMod?.(id);
       record.loaded = false;
       _mods.delete(id);
 

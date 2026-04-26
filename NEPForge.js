@@ -19,6 +19,7 @@
   _safeGet('bulletsE',            bulletsE);
   _safeGet('beams',               beams);
   _safeGet('ctx',                 ctx);
+  _safeGet('Camera',              Camera);
   _safeGet('spawnBullet',         spawnBullet);
   _safeGet('spawnForgeEnemy',     spawnForgeEnemy);
   _safeGet('spawnShockwave',      spawnShockwave);
@@ -1494,6 +1495,127 @@ const RenderPipeline = (() => {
 })();
 
 /* ═══════════════════════════════════════════════════════════════════════
+   10.5 CANVAS API  (camera-aware safe drawing helpers for mods)
+   ═══════════════════════════════════════════════════════════════════════ */
+const CanvasAPI = (() => {
+  const _num = (v, d = 0) => (isNum(v) ? v : d);
+  const _clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const _ctx = () => _g('ctx');
+  const _camera = () => _g('Camera') || window.Camera || null;
+  const _zoom = () => {
+    const z = _camera()?.zoom;
+    return isNum(z) && z > 0 ? z : 1;
+  };
+
+  function worldViewport() {
+    const W = _g('W') || 0, H = _g('H') || 0;
+    const z = _zoom();
+    const vw = W / z, vh = H / z;
+    return { x: (W - vw) * 0.5, y: (H - vh) * 0.5, w: vw, h: vh, z };
+  }
+
+  function worldToScreen(x, y) {
+    const z = _zoom();
+    const vp = worldViewport();
+    return { x: (x - vp.x) * z, y: (y - vp.y) * z, z };
+  }
+
+  function screenToWorld(x, y) {
+    const z = _zoom();
+    const vp = worldViewport();
+    return { x: x / z + vp.x, y: y / z + vp.y, z };
+  }
+
+  function withScreen(fn) {
+    const gc = _ctx();
+    if (!gc || !isFunc(fn)) return;
+    const guard = typeof gc.save === 'function' && typeof gc.restore === 'function';
+    if (guard) gc.save();
+    try {
+      const dpr = _num(window.DPR, 1);
+      if (typeof gc.setTransform === 'function') gc.setTransform(dpr, 0, 0, dpr, 0, 0);
+      fn(gc, { W: _g('W') || 0, H: _g('H') || 0, DPR: dpr });
+    } finally { if (guard) gc.restore(); }
+  }
+
+  function withWorld(fn) {
+    const gc = _ctx();
+    if (!gc || !isFunc(fn)) return;
+    const guard = typeof gc.save === 'function' && typeof gc.restore === 'function';
+    if (guard) gc.save();
+    try { fn(gc, worldViewport()); } finally { if (guard) gc.restore(); }
+  }
+
+  function clipRect(x, y, w, h, { space = 'screen', padding = 0 } = {}) {
+    const gc = _ctx();
+    if (!gc || typeof gc.beginPath !== 'function' || typeof gc.clip !== 'function') return false;
+    const W = _g('W') || 0, H = _g('H') || 0;
+    let rx = _num(x), ry = _num(y), rw = _num(w), rh = _num(h);
+    if (space === 'world') {
+      const p1 = worldToScreen(rx, ry);
+      const p2 = worldToScreen(rx + rw, ry + rh);
+      rx = p1.x; ry = p1.y; rw = p2.x - p1.x; rh = p2.y - p1.y;
+    }
+    rx = _clamp(rx, -padding, W + padding);
+    ry = _clamp(ry, -padding, H + padding);
+    rw = _clamp(rw, 0, W + padding - rx);
+    rh = _clamp(rh, 0, H + padding - ry);
+    gc.beginPath();
+    gc.rect(rx, ry, rw, rh);
+    gc.clip();
+    return rw > 0 && rh > 0;
+  }
+
+  function text(text, x, y, opts = {}) {
+    const gc = _ctx();
+    if (!gc) return null;
+    const {
+      space = 'screen', font = '12px Consolas, monospace', color = '#fff',
+      align = 'left', baseline = 'alphabetic', maxWidth = Infinity,
+      minFontPx = 9, padding = 4, keepInside = true, stroke, strokeWidth = 2,
+    } = opts;
+    let sx = _num(x), sy = _num(y);
+    if (space === 'world') ({ x: sx, y: sy } = worldToScreen(sx, sy));
+
+    const guard = typeof gc.save === 'function' && typeof gc.restore === 'function';
+    if (guard) gc.save();
+    try {
+      gc.font = font;
+      gc.fillStyle = color;
+      gc.textAlign = align;
+      gc.textBaseline = baseline;
+
+      if (isNum(maxWidth) && maxWidth > 0) {
+        const m = gc.measureText(String(text));
+        if (m.width > maxWidth) {
+          const mSize = String(font).match(/(\d+(?:\.\d+)?)px/);
+          const curPx = mSize ? Number(mSize[1]) : 12;
+          const nextPx = Math.max(minFontPx, curPx * (maxWidth / Math.max(1, m.width)));
+          gc.font = String(font).replace(/(\d+(?:\.\d+)?)px/, `${nextPx.toFixed(1)}px`);
+        }
+      }
+
+      if (keepInside) {
+        const W = _g('W') || 0, H = _g('H') || 0;
+        const m = gc.measureText(String(text));
+        sx = _clamp(sx, padding, Math.max(padding, W - padding - m.width));
+        sy = _clamp(sy, padding, Math.max(padding, H - padding));
+      }
+
+      if (stroke) {
+        gc.strokeStyle = stroke;
+        gc.lineWidth = strokeWidth;
+        gc.strokeText(String(text), sx, sy);
+      }
+      gc.fillText(String(text), sx, sy);
+      return { x: sx, y: sy };
+    } finally { if (guard) gc.restore(); }
+  }
+
+  return { worldViewport, worldToScreen, screenToWorld, withScreen, withWorld, clipRect, text };
+})();
+
+/* ═══════════════════════════════════════════════════════════════════════
    11. INPUT ROUTER
    ═══════════════════════════════════════════════════════════════════════ */
 const InputRouter = (() => {
@@ -2462,6 +2584,16 @@ function _buildAPI(modId) {
       hud:  (fn,pri) => RenderPipeline.hud(fn,modId,pri),
     },
 
+    canvas: {
+      viewport:      ()           => CanvasAPI.worldViewport(),
+      worldToScreen: (x,y)        => CanvasAPI.worldToScreen(x,y),
+      screenToWorld: (x,y)        => CanvasAPI.screenToWorld(x,y),
+      withScreen:    (fn)         => CanvasAPI.withScreen(fn),
+      withWorld:     (fn)         => CanvasAPI.withWorld(fn),
+      clipRect:      (x,y,w,h,o)  => CanvasAPI.clipRect(x,y,w,h,o),
+      text:          (txt,x,y,op) => CanvasAPI.text(txt,x,y,op),
+    },
+
     input: {
       bind:     (key,fn)  => InputRouter.bind(key,fn,modId),
       bindOnce: (key,fn)  => InputRouter.bindOnce(key,fn,modId),
@@ -2488,7 +2620,7 @@ function _buildAPI(modId) {
 
       // ── Tab / 菜单页 ──
       injectMenuTab(label, key, renderFn) {
-        UIManager.registerCustomTab(label, key, renderFn);
+        UIManager.registerCustomTab(label, key, renderFn, modId);
         return () => UIManager.openTab(key);
       },
       openForge:   () => UIManager.openTab('nepforge'),
@@ -2735,6 +2867,7 @@ const ModLoader = {
     ServiceRegistry.revokeAll(id);
     Pipelines.removeModFromAll(id);
     RenderPipeline.removeByMod(id);
+    UIManager.unregisterCustomTabsByMod(id);
     InputRouter.unbindAll(id);
     Scheduler.cancelAll(id);
     mod.loaded = false;
@@ -3045,15 +3178,15 @@ const UIManager = (() => {
   let _currentTab = 'mods';
   let _pageEl     = null;   // the .page div injected into menu-main
   let _bodyEl     = null;   // content container inside _pageEl
-  let _customTabs = {};     // key → { label, renderFn }
+  let _customTabs = {};     // key → { label, renderFn, modId }
 
   /* ── CSS (scoped to nep-* classes, injected once) ─────────────────── */
   const CSS = `
     .nep-page { padding: 6px 2px; display: none; }
-    .nep-inner-tabs { display:flex; gap:0; border-bottom:1px solid rgba(82,230,255,0.18); margin-bottom:8px; flex-shrink:0; }
-    .nep-itab { flex:1; padding:5px 4px; font-family:"Consolas","Monaco",monospace; font-size:10px;
+    .nep-inner-tabs { display:flex; flex-wrap:wrap; align-items:stretch; gap:0; border-bottom:1px solid rgba(82,230,255,0.18); margin-bottom:8px; flex-shrink:0; }
+    .nep-itab { flex:1 1 88px; min-width:84px; max-width:100%; padding:5px 4px; font-family:"Consolas","Monaco",monospace; font-size:10px;
       font-weight:700; letter-spacing:1.5px; text-transform:uppercase; background:none; border:none;
-      border-bottom:2px solid transparent; color:rgba(255,255,255,0.32); cursor:pointer; transition:all 0.13s; }
+      border-bottom:2px solid transparent; color:rgba(255,255,255,0.32); cursor:pointer; transition:all 0.13s; white-space:normal; overflow-wrap:anywhere; line-height:1.2; text-align:center; }
     .nep-itab:hover { color:rgba(255,255,255,0.65); }
     .nep-itab.active { color:#52E6FF; border-bottom-color:#52E6FF; }
     .nep-body { flex:1; overflow-y:auto; overflow-x:hidden; scrollbar-width:thin; scrollbar-color:rgba(82,230,255,0.22) transparent; }
@@ -3472,8 +3605,8 @@ function _injectMenuTab() {
     _renderTab(tab);
   }
 
-  function registerCustomTab(label, key, renderFn) {
-    _customTabs[key] = { label, renderFn };
+  function registerCustomTab(label, key, renderFn, modId = '_system') {
+    _customTabs[key] = { label, renderFn, modId };
     // Inject tab button into inner tab bar
     const tabBar = _pageEl?.querySelector('.nep-inner-tabs');
     if (tabBar && !tabBar.querySelector(`[data-tab="${key}"]`)) {
@@ -3487,9 +3620,23 @@ function _injectMenuTab() {
     _info(`Custom tab "${key}" registered.`);
   }
 
+  function unregisterCustomTabsByMod(modId) {
+    if (!modId) return;
+    let changed = false;
+    for (const [key, tab] of Object.entries(_customTabs)) {
+      if (tab?.modId !== modId) continue;
+      delete _customTabs[key];
+      const btn = _pageEl?.querySelector(`.nep-inner-tabs [data-tab="${key}"]`);
+      if (btn?.remove) btn.remove();
+      if (_currentTab === key) _currentTab = 'mods';
+      changed = true;
+    }
+    if (changed && _pageEl?.classList.contains('active')) _renderTab(_currentTab);
+  }
+
   EventBus.on('forge:log', () => { if (_currentTab === 'log') _renderLog(); }, '_ui');
 
-  return { toast, _updateModList, openTab, registerCustomTab,
+  return { toast, _updateModList, openTab, registerCustomTab, unregisterCustomTabsByMod,
            _renderTab: (tab) => { _currentTab = tab; _renderTab(tab); } };
 })();
 
@@ -5669,6 +5816,7 @@ window.NEPForge = {
   services:  ServiceRegistry,
   pipelines: Pipelines,
   render:    RenderPipeline,
+  canvas:    CanvasAPI,
   input:     InputRouter,
   schedule:  Scheduler,
   watchdog:  Watchdog,

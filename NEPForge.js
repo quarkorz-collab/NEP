@@ -5612,6 +5612,304 @@ labMultiSpawner: `NEPForge.install({
   }
 });`,
 
+novaWorkshop: `// Nova Workshop v1.2 (UI-safe edition: no alert/prompt)
+(function _WSBoot(Nova){
+  'use strict';
+  if (!Nova?.def) { console.error('[Workshop] Nova not found.'); return; }
+  if (Nova.get?.('nova-workshop')) return;
+
+  const DEFAULT_SERVER = 'http://localhost:3456';
+  const S = { category:'enemy', search:'', items:[], tab:'browse' };
+  let _root = null;
+
+  const uiToast = (msg, color='#52E6FF', dur=1700) => {
+    if (typeof Nova?.ui?.toast === 'function') Nova.ui.toast(msg, color, dur);
+    else if (typeof window?.NEPForge?.ui?.toast === 'function') window.NEPForge.ui.toast(msg, color, dur);
+    else console.log('[Workshop]', msg);
+  };
+  const uiModal = (title, content, buttons=[{label:'OK'}]) => {
+    if (typeof Nova?.ui?.modal === 'function') return Nova.ui.modal({ title, content, buttons });
+    return null;
+  };
+  const serverUrl = () => String(Nova.get?.('nova-workshop')?.state?.serverUrl || DEFAULT_SERVER).replace(/\\/$/, '');
+  const safe = (fn, fb=null) => { try { return fn(); } catch(_) { return fb; } };
+  const deepCopy = (v) => safe(() => JSON.parse(JSON.stringify(v)), v);
+  const mk = (tag, style='', text='') => {
+    const el = document.createElement(tag);
+    if (style) el.style.cssText = style;
+    if (text) el.textContent = text;
+    return el;
+  };
+  const prettyDate = (t) => {
+    const d = new Date(t || Date.now());
+    return isNaN(d.getTime()) ? 'N/A' : d.toLocaleDateString();
+  };
+
+  async function api(path, opts={}) {
+    const res = await fetch(serverUrl() + path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...opts,
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + await res.text());
+    const ct = res.headers.get('content-type') || '';
+    return ct.includes('json') ? res.json() : res.text();
+  }
+  const listItems = (cat, search='') => api('/api/items/' + cat + (search ? ('?search=' + encodeURIComponent(search)) : ''));
+  const getItem   = (id) => api('/api/items/id/' + encodeURIComponent(id));
+  const voteItem  = (id, dir) => api('/api/items/id/' + encodeURIComponent(id) + '/vote', { method:'POST', body:JSON.stringify({ dir }) });
+  const uploadItem= (payload) => api('/api/items', { method:'POST', body:JSON.stringify(payload) });
+  const deleteItem= (id, token='') => api('/api/items/id/' + encodeURIComponent(id), { method:'DELETE', body:JSON.stringify({ token }) });
+
+  const installMod = (code) => {
+    try {
+      // eslint-disable-next-line no-new-func
+      new Function('Nova', code)(Nova);
+      return { ok:true };
+    } catch (e) { return { ok:false, error:String(e?.message || e) }; }
+  };
+  const importEnemy = (data) => {
+    try {
+      const payload = (data && typeof data==='object')
+        ? (data.forge ? JSON.stringify(data) : JSON.stringify({ type:'forge', forge:data }))
+        : String(data || '');
+      if (typeof window.importForgeJSON !== 'function') throw new Error('importForgeJSON not found');
+      window.importForgeJSON(payload);
+      return true;
+    } catch (e) { uiToast('Import enemy failed: ' + (e?.message || e), '#FF2F57', 2000); return false; }
+  };
+  const importBuild = (data) => {
+    try {
+      const payload = (data && typeof data==='object')
+        ? (data.builds ? JSON.stringify(data) : JSON.stringify({ type:'builds', builds:{ A:data } }))
+        : String(data || '');
+      if (typeof window.importBuildsJSON !== 'function') throw new Error('importBuildsJSON not found');
+      window.importBuildsJSON(payload);
+      return true;
+    } catch (e) { uiToast('Import build failed: ' + (e?.message || e), '#FF2F57', 2000); return false; }
+  };
+  const captureBuild = () => {
+    const P = window.Player;
+    if (!P) return null;
+    return deepCopy({
+      hp:P.hp, maxHp:P.maxHp, shield:P.shield,
+      lv:P.lv, xp:P.xp, xpNeed:P.xpNeed,
+      emitters:P.emitters || [],
+      mods:P.activeMods || P.mods || [],
+      upgrades:P.upgrades || [],
+    });
+  };
+  const captureEnemy = () => safe(() => window._lastForgeSpec || window.Forge?.lastSpec, null);
+
+  function rerender(){ if (_root) render(_root); }
+
+  function openDeleteDialog(item){
+    const wrap = mk('div', 'display:flex;flex-direction:column;gap:8px;');
+    wrap.appendChild(mk('div', 'font-size:11px;color:#c9f3ff;', 'Delete "' + (item?.name || item?.id || '?') + '" ?'));
+    const inp = mk('input', 'width:100%;padding:6px;background:#050812;color:#7DF9C0;border:1px solid rgba(255,47,87,0.3);font-family:Consolas,monospace;font-size:11px;');
+    inp.placeholder = 'Delete token (optional)';
+    wrap.appendChild(inp);
+    uiModal('DELETE ITEM', wrap, [
+      { label:'CANCEL' },
+      { label:'DELETE', color:'#FF2F57', onClick: async () => {
+          try {
+            await deleteItem(item.id, inp.value.trim());
+            uiToast('Deleted: ' + item.id, '#50DC64', 1800);
+            S.items = S.items.filter(v => v.id !== item.id);
+            rerender();
+          } catch (e) { uiToast('Delete failed: ' + (e?.message || e), '#FF2F57', 2200); }
+        } },
+    ]);
+  }
+
+  function openJsonDialog(item, data){
+    const ta = mk('textarea', 'width:100%;min-height:220px;resize:vertical;background:#020510;color:#7DF9C0;border:1px solid rgba(82,230,255,0.25);padding:8px;font-family:Consolas,monospace;font-size:10px;');
+    ta.readOnly = true;
+    ta.value = JSON.stringify(data, null, 2);
+    const wrap = mk('div', 'display:flex;flex-direction:column;gap:8px;');
+    wrap.appendChild(ta);
+    uiModal('JSON PREVIEW · ' + (item?.name || item?.id || ''), wrap, [
+      { label:'COPY', color:'#52E6FF', onClick: async () => {
+          try { await navigator.clipboard.writeText(ta.value); uiToast('Copied JSON', '#50DC64', 1200); }
+          catch (_) { uiToast('Clipboard unavailable', '#FFB020', 1200); }
+        } },
+      { label:'CLOSE' },
+    ]);
+  }
+
+  async function loadList(){
+    try {
+      S.items = await listItems(S.category, S.search);
+      rerender();
+    } catch (e) {
+      uiToast('Server error: ' + (e?.message || e), '#FF2F57', 2200);
+    }
+  }
+
+  function renderBrowse(body){
+    const top = mk('div', 'display:flex;gap:6px;flex-wrap:wrap;');
+    [['enemy','👾 ENEMY'],['build','🛡 BUILD'],['mod','🔌 MOD']].forEach(([k, label]) => {
+      const b = mk('button', 'padding:5px 10px;border:1px solid rgba(82,230,255,0.30);font-size:10px;background:' + (S.category===k?'rgba(179,108,255,0.18)':'rgba(0,0,0,0.25)') + ';color:' + (S.category===k?'#B36CFF':'#52E6FF') + ';cursor:pointer;', label);
+      b.onclick = () => { S.category = k; S.items = []; rerender(); loadList(); };
+      top.appendChild(b);
+    });
+    body.appendChild(top);
+
+    const row = mk('div', 'display:flex;gap:6px;align-items:center;');
+    const inp = mk('input', 'flex:1;padding:6px;background:#050812;color:#7DF9C0;border:1px solid rgba(82,230,255,0.25);font-family:Consolas,monospace;font-size:11px;');
+    inp.placeholder = 'Search...';
+    inp.value = S.search;
+    inp.onkeydown = (ev) => { if (ev.key === 'Enter') { S.search = inp.value.trim(); loadList(); } };
+    const btn = mk('button', 'padding:6px 12px;border:1px solid rgba(82,230,255,0.35);background:rgba(82,230,255,0.12);color:#52E6FF;cursor:pointer;', 'SEARCH');
+    btn.onclick = () => { S.search = inp.value.trim(); loadList(); };
+    row.append(inp, btn);
+    body.appendChild(row);
+
+    const list = mk('div', 'display:flex;flex-direction:column;gap:6px;');
+    body.appendChild(list);
+    if (!S.items.length) {
+      list.appendChild(mk('div', 'font-size:10px;color:rgba(255,255,255,0.4);padding:8px 0;', '(no results)'));
+      return;
+    }
+    S.items.forEach(item => {
+      const card = mk('div', 'padding:8px;border:1px solid rgba(82,230,255,0.18);background:rgba(0,0,0,0.2);');
+      card.appendChild(mk('div', 'font-size:11px;color:#c8e6ff;font-weight:700;', item.name || item.id));
+      card.appendChild(mk('div', 'font-size:9px;color:rgba(255,255,255,0.48);margin:2px 0 5px;', 'by ' + (item.author || 'anonymous') + ' · ' + prettyDate(item.createdAt) + ' · ⬆' + (item.votes || 0)));
+      if (item.description) card.appendChild(mk('div', 'font-size:10px;color:rgba(255,255,255,0.7);margin-bottom:6px;', String(item.description).slice(0, 140)));
+      const br = mk('div', 'display:flex;gap:5px;flex-wrap:wrap;');
+      const viewBtn = mk('button', 'padding:4px 8px;border:1px solid rgba(82,230,255,0.35);background:rgba(82,230,255,0.1);color:#52E6FF;cursor:pointer;', 'JSON');
+      viewBtn.onclick = async () => { const full = await getItem(item.id); openJsonDialog(item, full.data); };
+      br.appendChild(viewBtn);
+      const upBtn = mk('button', 'padding:4px 8px;border:1px solid rgba(80,220,100,0.35);background:rgba(80,220,100,0.1);color:#50DC64;cursor:pointer;', 'UPVOTE');
+      upBtn.onclick = async () => { try { const r = await voteItem(item.id, 'up'); item.votes = r.votes || item.votes; rerender(); } catch(e){ uiToast('Vote failed', '#FF2F57'); } };
+      br.appendChild(upBtn);
+      const delBtn = mk('button', 'padding:4px 8px;border:1px solid rgba(255,47,87,0.35);background:rgba(255,47,87,0.08);color:#FF2F57;cursor:pointer;', 'DELETE');
+      delBtn.onclick = () => openDeleteDialog(item);
+      br.appendChild(delBtn);
+      const act = mk('button', 'padding:4px 8px;border:1px solid rgba(179,108,255,0.35);background:rgba(179,108,255,0.1);color:#B36CFF;cursor:pointer;', S.category==='mod' ? 'INSTALL' : 'IMPORT');
+      act.onclick = async () => {
+        try {
+          const full = await getItem(item.id);
+          if (S.category === 'enemy') {
+            const ok = importEnemy(full.data);
+            uiToast(ok ? 'Enemy imported' : 'Import failed', ok ? '#50DC64' : '#FF2F57');
+          } else if (S.category === 'build') {
+            const ok = importBuild(full.data);
+            uiToast(ok ? 'Build imported' : 'Import failed', ok ? '#50DC64' : '#FF2F57');
+          }
+          else {
+            const r = installMod(full.data);
+            uiToast(r.ok ? 'Mod installed' : ('Install failed: ' + r.error), r.ok ? '#52E6FF' : '#FF2F57', 2200);
+          }
+        } catch (e) { uiToast('Action failed: ' + (e?.message || e), '#FF2F57', 2200); }
+      };
+      br.appendChild(act);
+      card.appendChild(br);
+      list.appendChild(card);
+    });
+  }
+
+  function renderUpload(body){
+    const category = mk('div', 'display:flex;gap:5px;flex-wrap:wrap;');
+    let uploadCat = 'enemy';
+    [['enemy','ENEMY'],['build','BUILD'],['mod','MOD']].forEach(([k, t]) => {
+      const b = mk('button', 'padding:5px 9px;border:1px solid rgba(82,230,255,0.30);background:' + (k===uploadCat?'rgba(82,230,255,0.2)':'rgba(0,0,0,0.3)') + ';color:#52E6FF;cursor:pointer;', t);
+      b.onclick = () => { uploadCat = k; helper(); };
+      category.appendChild(b);
+    });
+    body.appendChild(category);
+    const name = mk('input', 'width:100%;padding:6px;background:#050812;color:#7DF9C0;border:1px solid rgba(82,230,255,0.25);font-family:Consolas,monospace;font-size:11px;'); name.placeholder='Name';
+    const author = mk('input', 'width:100%;padding:6px;background:#050812;color:#7DF9C0;border:1px solid rgba(82,230,255,0.25);font-family:Consolas,monospace;font-size:11px;'); author.placeholder='Author';
+    const desc = mk('textarea', 'width:100%;min-height:56px;background:#050812;color:#7DF9C0;border:1px solid rgba(82,230,255,0.25);padding:6px;font-family:Consolas,monospace;font-size:10px;'); desc.placeholder='Description';
+    const data = mk('textarea', 'width:100%;min-height:180px;background:#020510;color:#7DF9C0;border:1px solid rgba(82,230,255,0.25);padding:6px;font-family:Consolas,monospace;font-size:10px;'); data.placeholder='JSON or JS code';
+    const token = mk('input', 'width:100%;padding:6px;background:#050812;color:#7DF9C0;border:1px solid rgba(82,230,255,0.25);font-family:Consolas,monospace;font-size:11px;'); token.placeholder='Delete token (optional)';
+    body.append(name, author, desc, data, token);
+    const helperRow = mk('div', 'display:flex;gap:6px;flex-wrap:wrap;');
+    body.appendChild(helperRow);
+    function helper(){
+      helperRow.innerHTML = '';
+      if (uploadCat === 'enemy') {
+        const b = mk('button', 'padding:4px 8px;border:1px solid rgba(255,176,32,0.35);background:rgba(255,176,32,0.1);color:#FFB020;cursor:pointer;', 'CAPTURE ENEMY');
+        b.onclick = () => { const v = captureEnemy(); if (!v) return uiToast('No forge enemy captured', '#FFB020'); data.value = JSON.stringify(v, null, 2); };
+        helperRow.appendChild(b);
+      } else if (uploadCat === 'build') {
+        const b = mk('button', 'padding:4px 8px;border:1px solid rgba(255,176,32,0.35);background:rgba(255,176,32,0.1);color:#FFB020;cursor:pointer;', 'CAPTURE BUILD');
+        b.onclick = () => { const v = captureBuild(); if (!v) return uiToast('Player unavailable', '#FF2F57'); data.value = JSON.stringify(v, null, 2); };
+        helperRow.appendChild(b);
+      }
+    }
+    helper();
+    const submit = mk('button', 'padding:6px 12px;border:1px solid rgba(80,220,100,0.4);background:rgba(80,220,100,0.1);color:#50DC64;cursor:pointer;', 'UPLOAD');
+    submit.onclick = async () => {
+      const payloadName = name.value.trim();
+      const raw = data.value.trim();
+      if (!payloadName || !raw) return uiToast('Name and Data required', '#FF2F57');
+      let parsed = raw;
+      if (uploadCat !== 'mod') {
+        try { parsed = JSON.parse(raw); }
+        catch (e) { uiToast('Invalid JSON: ' + (e?.message || e), '#FF2F57', 2200); return; }
+      }
+      try {
+        const ret = await uploadItem({
+          category: uploadCat,
+          name: payloadName,
+          author: author.value.trim() || 'anonymous',
+          description: desc.value.trim(),
+          data: parsed,
+          token: token.value.trim() || undefined,
+        });
+        uiToast('Uploaded: ' + ret.id, '#50DC64', 2200);
+      } catch (e) { uiToast('Upload failed: ' + (e?.message || e), '#FF2F57', 2200); }
+    };
+    body.appendChild(submit);
+  }
+
+  function renderSettings(body){
+    const url = mk('input', 'width:100%;padding:6px;background:#050812;color:#7DF9C0;border:1px solid rgba(82,230,255,0.25);font-family:Consolas,monospace;font-size:11px;');
+    url.value = serverUrl();
+    body.appendChild(url);
+    const row = mk('div', 'display:flex;gap:6px;margin-top:6px;');
+    const save = mk('button', 'padding:6px 10px;border:1px solid rgba(80,220,100,0.4);background:rgba(80,220,100,0.1);color:#50DC64;cursor:pointer;', 'SAVE');
+    save.onclick = () => { const rec = Nova.get?.('nova-workshop'); if (rec?.state) rec.state.serverUrl = url.value.trim(); uiToast('Server saved', '#50DC64'); };
+    const ping = mk('button', 'padding:6px 10px;border:1px solid rgba(82,230,255,0.35);background:rgba(82,230,255,0.1);color:#52E6FF;cursor:pointer;', 'PING');
+    ping.onclick = async () => { try { const r = await api('/api/ping'); uiToast('Server OK: ' + JSON.stringify(r), '#50DC64', 2200); } catch (e) { uiToast('Ping failed: ' + (e?.message || e), '#FF2F57', 2200); } };
+    row.append(save, ping);
+    body.appendChild(row);
+  }
+
+  function render(container){
+    _root = container;
+    container.innerHTML = '';
+    container.style.cssText = 'height:100%;display:flex;flex-direction:column;font-family:Consolas,monospace;';
+    const tabBar = mk('div', 'display:flex;border-bottom:1px solid rgba(82,230,255,0.22);');
+    [['browse','BROWSE'],['upload','UPLOAD'],['settings','SETTINGS']].forEach(([k, t]) => {
+      const b = mk('button', 'flex:1;padding:6px 8px;font-size:10px;letter-spacing:1px;background:none;border:none;border-bottom:2px solid ' + (S.tab===k?'#52E6FF':'transparent') + ';color:' + (S.tab===k?'#52E6FF':'rgba(255,255,255,0.35)') + ';cursor:pointer;', t);
+      b.onclick = () => { S.tab = k; render(container); };
+      tabBar.appendChild(b);
+    });
+    container.appendChild(tabBar);
+    const body = mk('div', 'flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px;');
+    container.appendChild(body);
+    if (S.tab === 'browse') renderBrowse(body);
+    else if (S.tab === 'upload') renderUpload(body);
+    else renderSettings(body);
+  }
+
+  Nova.def('nova-workshop', {
+    name: 'Nova Workshop',
+    version: '1.2',
+    description: 'Community workshop for enemy/build/mod sharing with in-game style dialogs.',
+    state: { serverUrl: DEFAULT_SERVER },
+    setup(ctx) {
+      ctx.nep.ui.registerCustomTab('🛒 WORKSHOP', 'workshop', (container) => render(container));
+      ctx.toast('🛒 WORKSHOP ready', '#B36CFF', 1700);
+      loadList();
+    },
+    teardown() {
+      uiToast('Workshop unloaded', '#FFB020', 1200);
+    },
+  });
+})(window.Nova);`,
+
 playerFireControl: `NEPForge.install({
   id: 'player-fire-control',
   name: 'Player Fire Control',

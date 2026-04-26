@@ -15208,12 +15208,14 @@ BG_Effect.init();
       }
 
       const offscreenBottomY = H/Camera.zoom + 220;
-      if (Game.mode === 'lab') {
+      const isForgeArenaMode = (Game.mode === 'lab' || Game.mode === 'challenge');
+      if (isForgeArenaMode) {
         if (e.y > offscreenBottomY) {
           e.y = -120;
           e.x = clamp(e.x + rand(-100, 100), 50, W - 50);
           e.age = 0;
           e._labTopStickT = 0;
+          e._labBottomBiasT = 0;
           if (Number.isFinite(e.vy)) e.vy = Math.max(e.vy||0, 120);
           if (Number.isFinite(e._cy)) e._cy = e.y;
           if (Number.isFinite(e._cx)) e._cx = clamp(e.x, 24, W-24);
@@ -15236,6 +15238,20 @@ BG_Effect.init();
           }
         } else {
           e._labTopStickT = 0;
+        }
+
+        // LAB / CHAOS（challenge）里让怪更偏上半屏，避免长期贴底边
+        const upperBandMaxY = H * 0.62;
+        if (e.y > upperBandMaxY) {
+          e._labBottomBiasT = (e._labBottomBiasT || 0) + dt;
+          const targetY = upperBandMaxY - Math.min(72, e._labBottomBiasT * 48);
+          e.y = lerp(e.y, targetY, 1 - Math.exp(-3.2 * dt));
+          if (Number.isFinite(e.vy)) e.vy = Math.min(e.vy || 0, 86);
+          if (e.mmx && e._labBottomBiasT > 0.65 && (e.mmx.mode === 'HOLD' || e.mmx.mode === 'ORBIT')) {
+            e.mmx.state = 'enter';
+          }
+        } else {
+          e._labBottomBiasT = 0;
         }
       } else if (e.y > offscreenBottomY) {
         e.alive=false;
